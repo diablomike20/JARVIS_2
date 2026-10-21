@@ -7,14 +7,15 @@ Az ág alapja a `codex/ng-integration`, a felület ága `codex/ui-redesign`.
 1. Töltsd le az ág ZIP-jét: https://github.com/diablomike20/JARVIS_2/archive/refs/heads/codex/ui-redesign.zip
 2. A ZIP-en jobb kattintás → Az összes kibontása. Válassz egy új mappát, például `C:\Jarvis-UI-Proba`. A ZIP-en belül ne indíts fájlokat.
 3. A kibontott főmappában indítsd az `NG_TELEPITES.cmd` fájlt. Ez ebben a mappában telepít és lefordítja a felületet. Pythonra és Node.js/npm-re szükség van; az első telepítés internetet használ.
-4. A sikeres telepítés után ugyanebből a mappából indítsd a `run-app.bat` fájlt.
+4. A sikeres telepítés után ugyanebből a mappából indítsd az Asztalon létrejött **Jarvis AI** parancsikont vagy a kibontott főmappa **JARVIS.vbs** fájlját. Ez külön Electron-ablakot indít, böngészőlap és nyitva maradó parancssor nélkül. A `run-app.bat` hibakeresési indító maradt.
 5. A külön példányhoz állítsd be a saját modelledet a `config.yaml` fájlban az NG útmutató szerint. A régi példány beállításait és adatfájljait az indító nem keresi és nem másolja át. Két Jarvist ne futtass egyszerre ugyanazon a porton.
 
 ## Mi változott?
 
 - Bal oldalon a projektek és a hozzájuk tartozó beszélgetések láthatók. A kereső a neveikben keres. A projekt sorára kattintva kinyílik a beszélgetéslista; egy beszélgetés kiválasztása aktiválja a munkamenetet.
 - A projektlista `+` gombja új projektet hoz létre. Egy már létező mappa teljes útvonalát kell megadni. A fejlécben új beszélgetés indítható; a ceruzagomb az aktív beszélgetést nevezi át.
-- Középen a nagyobb chat és a rögzített üzenetszerkesztő található. A kódblokkok külön görgethetők és másolhatók, a csatolmányok megnyithatók. A kezdő javaslatok csak kitöltik a szerkesztőt; küldés előtt módosíthatók.
+- Középen az első Brahma-projekt eredeti, helyben betöltött 3D animációja látható. A hallgatás, gondolkodás és beszéd állapotára, valamint a mikrofon / lejátszás hangerejére reagál. A „Több hely a chatnek” gomb kisebbre veszi. Másik nézetben szünetel, csökkentett mozgás beállításnál ritkábban frissül. WebGL-hiba esetén egyszerű SVG-megjelenítésre vált.
+- Alatta a nagyobb chat és a rögzített üzenetszerkesztő található. A kódblokkok külön görgethetők és másolhatók, a csatolmányok megnyithatók. A kezdő javaslatok csak kitöltik a szerkesztőt; küldés előtt módosíthatók.
 - Jobbra a munkaterv, a projektfeladatok, a kinyitható agenteredmények és az eszközműveletek követhetők. A projektfeladatok állapota kézzel is szerkeszthető; ez önmagában nem futtatja a feladatot.
 - A mikrofon, a felolvasás kapcsolója és a felolvasás leállítása állandó helyen található. A munkafolyamat panel külön gombja az aktuális munkának megszakítási kérést is küld. A megszakíthatatlan eszközök futása nem feltétlenül áll le azonnal.
 - A Beállítások magyar csoportokat kaptak: Hang, Memória, Feladatok, Kapcsolatok, Rendszer, Adatok. A Hang csoportban Tamás, Noémi és Piper közül választhatsz. Előbb mentsd a hangot, aztán indítsd a mentett hang próbáját. A felolvasásnak bekapcsolva kell lennie.
@@ -36,3 +37,13 @@ A Windows mikrofonja, hangkimenete és Electron ablaka helyi Windows-próbát ig
 - `npm --prefix web test`
 - `python -m pytest tests -q`
 - Opcionális böngészős elfogadási próba: telepített Playwright és Chromium mellett `node web/scripts/ui-smoke.mjs`. A script maga indítja a Vite-ot; `UI_BASE_URL` megadásával meglévő szervert használ. Külső tesztkörnyezethez `PLAYWRIGHT_MODULE` és `CHROMIUM_EXECUTABLE` megadható. A teszt nem valódi modellkapcsolatot mér.
+
+## Asztali használat
+
+- A fejléc üres részén fogva mozgatható az ablak.
+- Jobbra a `−` kis méretre állít, a `□` nagyít / visszaállít, a `×` a tálcára rejt.
+- Teljes kilépés: az óra melletti Jarvis-ikon jobb kattintás → **Kilépés a Jarvisból**.
+- A telepítő ebben az új próbamappában telepíti az Electron függőségeit is. Ha már van Jarvis-parancsikon az Asztalon, azt megőrzi, és **Jarvis AI - UI proba** néven hoz létre másikat.
+- A mappát telepítés után ne mozgasd; költöztetés után indítsd újra az `NG_TELEPITES.cmd` fájlt a parancsikon frissítéséhez.
+
+Ez továbbra is forrásból települő Electron-alkalmazás, helyi webes megjelenítővel és Python-motorral. Önálló, minden futtatókörnyezetet tartalmazó Windows EXE/NSIS telepítő ebben a változatban nem készült. Az Electron buildlistájába bekerült a korábban hiányzó preload; a teljes csomagolt motor kezelése külön feladat.

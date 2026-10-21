@@ -1,0 +1,12 @@
+JARVIS - BRAHMA MAG - 2026-10-22
+
+1. A teljes ZIP-et bontsd ki UJ mappaba.
+2. Allitsd le a regi Jarvist a talcaikonjan keresztul is.
+3. A kibontott mappaban inditsd az NG_TELEPITES.cmd fajlt.
+4. Telepites utan inditsd a JARVIS.vbs fajlt vagy az asztali Jarvis parancsikont.
+
+Python es Node.js szukseges; az elso telepites internetet hasznal.
+A program kulon Electron-ablakban fut. Ez forrasbol telepulo csomag, nem onallo EXE-telepito.
+A leforditott webes felulet es az eredeti Brahma animacio benne van.
+Reszletes utmutato: docs/ui/BEALLITAS.md
+A regi API-beallitasokat ez a kulon proba nem masolja at; config.yaml-ban allitsd be oket.

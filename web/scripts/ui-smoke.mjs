@@ -50,6 +50,14 @@ page.setDefaultTimeout(10000);
 page.setDefaultNavigationTimeout(10000);
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
+await page.addInitScript(() => {
+  window.desktopSignals = [];
+  window.jarvis = {
+    send: (channel) => window.desktopSignals.push(channel),
+    invoke: async () => "full",
+    on: () => () => {},
+  };
+});
 let socket;
 const messages = [];
 let active = "s1";
@@ -219,6 +227,23 @@ try {
   await page.waitForFunction(
     () => !document.querySelector(".fixed.inset-0.z-\\[1000\\]"),
   );
+  await page.locator('.brahma-stage[data-ready="true"]').waitFor({timeout: 25000});
+  const core = page.frameLocator('iframe[title="Eredeti Brahma vizuális mag"]');
+  await core.locator('canvas').waitFor();
+  socket.send(JSON.stringify({type: 'thinking'}));
+  await core.locator('html[data-state="THINKING"]').waitFor();
+  await page.emulateMedia({reducedMotion: 'no-preference'});
+  await page.waitForTimeout(1200);
+  await page.screenshot({path: '/tmp/jarvis-brahma-core.png'});
+  await page.emulateMedia({reducedMotion: 'reduce'});
+  await page.getByRole('button', {name: 'Mag összecsukása', exact: true}).click();
+  assert(await page.locator('.brahma-stage.is-compact').count());
+  await page.getByRole('button', {name: 'Mag kibontása', exact: true}).click();
+  await page.getByRole('button', {name: 'Ablak kis méretre', exact: true}).click();
+  await page.getByRole('button', {name: 'Ablak nagyítása vagy visszaállítása', exact: true}).click();
+  assert.deepEqual(await page.evaluate(() => window.desktopSignals.slice(-2)), ['jarvis:minimize', 'jarvis:maximize']);
+  assert.equal(await page.locator('.workspace-header').evaluate(el => getComputedStyle(el).getPropertyValue('-webkit-app-region')), 'drag');
+  console.log('original WebGL core, live state bridge, compact mode and desktop controls checked');
   await page
     .getByRole("button", {
       name: "Mutasd meg a projekt aktuális feladatait.",
@@ -320,6 +345,7 @@ try {
   );
   rejectActivation = false;
   await page.getByRole("button", { name: "Beállítások", exact: true }).click();
+  await core.locator('html[data-paused="true"]').waitFor({state: 'attached'});
   await page
     .getByRole("combobox", { name: "Magyar hang" })
     .selectOption("hu-HU-NoemiNeural");

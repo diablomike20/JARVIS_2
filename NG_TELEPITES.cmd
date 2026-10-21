@@ -34,7 +34,17 @@ popd
 "venv\Scripts\python.exe" -m jarvis.main --check
 if errorlevel 1 goto :error
 echo.
-echo Kesz. Inditas: run-app.bat
+pushd electron
+call npm ci
+if errorlevel 1 (
+  popd
+  goto :error
+)
+popd
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\desktop-shortcut.ps1"
+if errorlevel 1 goto :error
+echo Kesz. Inditas: JARVIS.vbs vagy az asztali Jarvis parancsikon.
+echo A run-app.bat hibakereseshez tovabbra is hasznalhato.
 pause
 exit /b 0
 :error

@@ -12,6 +12,8 @@ const ALLOWED_OUT = new Set([
   "jarvis:wake",
   "jarvis:show",
   "jarvis:hide",
+  "jarvis:minimize",
+  "jarvis:maximize",
   "jarvis:toggle-visibility",
   "jarvis:set-widget-mode",
   "jarvis:request-mode",

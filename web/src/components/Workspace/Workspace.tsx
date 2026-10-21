@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import BrahmaCore from "../Orb/BrahmaCore";
 import ChatPanel from "../Chat/ChatPanel";
 import CommandBar from "../Chat/CommandBar";
 import Settings from "../HUD/Settings";
@@ -36,7 +37,7 @@ const states: Record<string, string> = {
   idle: "Készenlét",
   listening: "Hallgatlak",
   thinking: "Gondolkodom",
-  speaking: "Válasz készül",
+  speaking: "Beszélek",
   pending: "Várakozik",
   running: "Folyamatban",
   done: "Kész",
@@ -184,7 +185,7 @@ export default function Workspace({ onClassic }: { onClassic: () => void }) {
         >
           ☰
         </button>
-        <div className="workspace-brand">
+        <div className="workspace-brand desktop-drag">
           <span className="workspace-reactor" aria-hidden="true">
             J
           </span>
@@ -213,6 +214,11 @@ export default function Workspace({ onClassic }: { onClassic: () => void }) {
             ◱
           </button>
         </div>
+        {(window as any).jarvis && <div className="desktop-window-actions" aria-label="Ablakkezelés">
+          <button aria-label="Ablak kis méretre" onClick={() => (window as any).jarvis.send("jarvis:minimize")}>−</button>
+          <button aria-label="Ablak nagyítása vagy visszaállítása" onClick={() => (window as any).jarvis.send("jarvis:maximize")}>□</button>
+          <button aria-label="Elrejtés a tálcára" onClick={() => (window as any).jarvis.send("jarvis:hide")}>×</button>
+        </div>}
       </header>
       <div className="workspace-layout">
         {(navigation || activity) && (
@@ -408,6 +414,7 @@ export default function Workspace({ onClassic }: { onClassic: () => void }) {
             </div>
           )}
           <div className="workspace-content" hidden={view !== "chat"}>
+            <BrahmaCore active={view === "chat"} />
             <ChatPanel />
             <div className="workspace-composer">
               <CommandBar />

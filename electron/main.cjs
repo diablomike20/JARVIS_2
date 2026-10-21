@@ -188,30 +188,30 @@ function rebuildTrayMenu() {
   const isVisible = mainWindow ? mainWindow.isVisible() : false;
   const menu = Menu.buildFromTemplate([
     {
-      label: isVisible ? "Hide JARVIS" : "Show JARVIS",
+      label: isVisible ? "Jarvis elrejtése" : "Jarvis megnyitása",
       click: () => (isVisible ? hideWindow() : showWindow()),
     },
     { type: "separator" },
     {
-      label: "Full HUD",
+      label: "Teljes ablak",
       type: "radio",
       checked: !isWidget,
       click: () => { applyMode(MODE.FULL); showWindow(); },
     },
     {
-      label: "Widget (side panel)",
+      label: "Kompakt oldalsáv",
       type: "radio",
       checked: isWidget,
       click: () => { applyMode(MODE.WIDGET); showWindow(); },
     },
     { type: "separator" },
     {
-      label: "Toggle visibility (Ctrl+Shift+Space)",
+      label: "Megjelenítés / elrejtés (Ctrl+Shift+Space)",
       click: () => toggleVisibility(),
     },
     { type: "separator" },
     {
-      label: "Quit JARVIS",
+      label: "Kilépés a Jarvisból",
       click: () => { isQuiting = true; app.quit(); },
     },
   ]);
@@ -410,6 +410,11 @@ function installIpc() {
   });
   ipcMain.on("jarvis:show", (_e, payload) => showWindow(payload || {}));
   ipcMain.on("jarvis:hide", () => hideWindow());
+  ipcMain.on("jarvis:minimize", () => mainWindow?.minimize());
+  ipcMain.on("jarvis:maximize", () => {
+    if (!mainWindow) return;
+    mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+  });
   ipcMain.on("jarvis:toggle-visibility", () => toggleVisibility());
   ipcMain.on("jarvis:set-widget-mode", (_e, on) => {
     applyMode(on ? MODE.WIDGET : MODE.FULL);
