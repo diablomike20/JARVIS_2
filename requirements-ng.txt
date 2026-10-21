@@ -1,0 +1,7 @@
+# Optional stdio MCP interoperability (v1 API used by jarvis/extensions/mcp.py).
+mcp>=1.26,<2
+# IANA timezone database for Windows (Europe/Budapest quiet hours).
+tzdata>=2025.2
+# Optional ICS recurrence expansion; no home-grown RFC parser.
+icalendar>=6,<8
+recurring-ical-events>=3,<4

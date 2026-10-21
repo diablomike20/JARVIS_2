@@ -52,6 +52,14 @@ class ImageModelConfig(BaseModel):
 class PermissionsConfig(BaseModel):
     mode: str = "confirm"
     denylist: list[str] = Field(default_factory=list)
+    rules: list["PermissionRule"] = Field(default_factory=list)
+
+
+class PermissionRule(BaseModel):
+    tool: str = "*"
+    effect: str = Field(default="ask", pattern="^(allow|ask|deny)$")
+    root: str = ""
+    expires: float | None = None
 
 
 class UIConfig(BaseModel):
@@ -98,6 +106,7 @@ class PluginToggle(BaseModel):
 
 class AssistantConfig(BaseModel):
     name: str = "JARVIS"
+    language: str = "hu"
     persona: str = "You are JARVIS, a calm, precise, proactive local AI assistant."
 
 
@@ -139,6 +148,9 @@ class UltimateConfig(BaseModel):
 
 class VoiceConfig(BaseModel):
     wake_word: str = "Hey JARVIS"
+    language: str = "hu-HU"
+    stt_language: str = "hu"
+    stt_initial_prompt: str = "Magyar beszéd. Jarvis, nyisd meg a fájlt, keress az interneten, készíts képet."
 
     @field_validator("wake_word")
     @classmethod
@@ -148,15 +160,15 @@ class VoiceConfig(BaseModel):
             raise ValueError("wake_word must not be blank")
         return value
 
-    provider: str = "auto"  # auto | piper | edge_tts | nvidia_riva
-    edge_voice: str = "en-GB-ThomasNeural"
-    edge_rate: str = "-6%"
+    provider: str = "edge_tts"  # auto | piper | edge_tts | nvidia_riva
+    edge_voice: str = "hu-HU-TamasNeural"
+    edge_rate: str = "+0%"
     edge_pitch: str = "+0Hz"
-    # Piper (community JARVIS model, closest to Paul Bettany)
+    # Local Hungarian Piper model. Voice quality depends on the model.
     piper_enabled: bool = False
-    piper_model: str = "data/voices/jarvis.onnx"
+    piper_model: str = "data/voices/hu_HU-imre-medium.onnx"
     piper_speaker: int = 0
-    piper_length_scale: float = 1.32
+    piper_length_scale: float = 1.0
     piper_noise_scale: float = 0.55
     piper_noise_w_scale: float = 0.72
     piper_volume: float = 1.15
@@ -169,6 +181,58 @@ class VoiceConfig(BaseModel):
         "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tlt-jarvis/"
         "models/speechsynthesis_waveglow?version=deployable_v1.0"
     )
+
+
+class MCPServerConfig(BaseModel):
+    enabled: bool = False
+    command: str
+    args: list[str] = Field(default_factory=list)
+    cwd: str = ""
+    env_vars: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=20, ge=1, le=300)
+
+
+class NGConfig(BaseModel):
+    enabled: bool = True
+    skill_dirs: list[str] = Field(default_factory=lambda: ["skills"])
+    mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    watch_paths: list[str] = Field(default_factory=list)
+    watch_git: list[str] = Field(default_factory=list)
+    poll_seconds: float = Field(default=15, ge=1, le=3600)
+    timezone: str = "Europe/Budapest"
+    quiet_start: int = Field(default=22, ge=0, le=23)
+    quiet_end: int = Field(default=8, ge=0, le=23)
+    notifications_per_hour: int = Field(default=8, ge=0, le=100)
+    system_alerts: bool = False
+    cpu_threshold: float = Field(default=95, ge=1, le=100)
+    memory_threshold: float = Field(default=90, ge=1, le=100)
+    max_checkpoint_bytes: int = Field(default=20_000_000, ge=1, le=500_000_000)
+    max_agents: int = Field(default=4, ge=1, le=8)
+    agent_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+    applications: dict[str, "CommandConfig"] = Field(default_factory=dict)
+    dev_servers: dict[str, "CommandConfig"] = Field(default_factory=dict)
+    language_servers: dict[str, "CommandConfig"] = Field(default_factory=dict)
+    imap_accounts: dict[str, "IMAPConfig"] = Field(default_factory=dict)
+    calendar_files: list[str] = Field(default_factory=list)
+    daily_briefing: bool = False
+    briefing_hour: int = Field(default=9, ge=0, le=23)
+
+
+class IMAPConfig(BaseModel):
+    host: str
+    port: int = Field(default=993, ge=1, le=65535)
+    folder: str = "INBOX"
+    user_env: str = "IMAP_USER"
+    password_env: str = "IMAP_PASS"
+    watch: bool = False
+
+
+class CommandConfig(BaseModel):
+    command: str
+    args: list[str] = Field(default_factory=list)
+    cwd: str = ""
+    description: str = ""
+    timeout_seconds: float = Field(default=60, ge=1, le=1800)
 
 
 class Config(BaseModel):
@@ -189,8 +253,10 @@ class Config(BaseModel):
     mission: MissionConfig = Field(default_factory=MissionConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     ultimate: UltimateConfig = Field(default_factory=UltimateConfig)
+    ng: NGConfig = Field(default_factory=NGConfig)
 
     project_root: Path = PROJECT_ROOT
+    config_source: Path | None = Field(default=None, exclude=True)
 
     def abs_path(self, rel: str) -> Path:
         p = Path(rel)
@@ -211,11 +277,12 @@ def load_config(path: Path | None = None) -> Config:
     if DEFAULT_ENV_PATH.exists():
         load_dotenv(DEFAULT_ENV_PATH)
 
-    cfg_path = path or DEFAULT_CONFIG_PATH
+    cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
         return Config()
 
     with cfg_path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
+    raw["config_source"] = cfg_path.resolve()
     return Config(**raw)

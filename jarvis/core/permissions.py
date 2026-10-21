@@ -7,6 +7,10 @@ or hard-refuse based on the configured mode plus the denylist.
 from __future__ import annotations
 
 import re
+import json
+import time
+from fnmatch import fnmatchcase
+from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -72,9 +76,29 @@ class PermissionManager:
         return None
 
     def evaluate(self, req: PermissionRequest) -> Decision:
-        denied = self.is_denylisted(req.preview)
+        denied = self.is_denylisted(req.preview + " " + json.dumps(req.args, ensure_ascii=False, default=str))
         if denied:
             return Decision.DENY
+
+        matches = []
+        for rule in self.cfg.permissions.rules:
+            if rule.expires is not None and rule.expires <= time.time():
+                continue
+            if not fnmatchcase(req.tool, rule.tool):
+                continue
+            if rule.root:
+                root = Path(rule.root).expanduser().resolve()
+                paths = [v for k, v in req.args.items() if k in {"path", "src", "dst", "root", "cwd"} and isinstance(v, str) and v]
+                if not paths or not all(Path(p).expanduser().resolve().is_relative_to(root) for p in paths):
+                    continue
+            matches.append(rule.effect)
+        # Explicit deny always wins over grants, including bypass mode.
+        if "deny" in matches:
+            return Decision.DENY
+        if "ask" in matches:
+            return Decision.ASK
+        if "allow" in matches:
+            return Decision.ALLOW
 
         # bypass: trust everything except the denylist. User-requested.
         if self.mode == "bypass":

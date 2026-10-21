@@ -1,5 +1,5 @@
 import { nextId, useStore } from "./store";
-import { speak } from "./voice";
+import { speak, stopSpeaking } from "./voice";
 
 type WSMessage = Record<string, any>;
 
@@ -139,6 +139,18 @@ class JarvisWS {
     }
 
     switch (m.type) {
+      case "session_state":
+        stopSpeaking();
+        this.streamingId = null;
+        this.taskChatId = null;
+        st.clearChat(); st.clearTools(); st.clearMedia();
+        for (const message of (m.messages || [])) {
+          if (["user", "assistant"].includes(message.role) && typeof message.content === "string" && message.content &&
+              !message.content.startsWith("<tool_result") && !message.content.startsWith("(internal protocol")) {
+            st.pushChat({ id: nextId(), role: message.role, text: message.content, ts: Date.now() });
+          }
+        }
+        break;
       case "pong":
         break;
       case "info":

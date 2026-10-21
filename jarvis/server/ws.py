@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+import time
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -44,6 +45,10 @@ HELP_TEXT = (
 
 
 async def websocket_endpoint(ws: WebSocket) -> None:
+    from ..extensions.pairing import authorized
+    if not authorized(ws, getattr(ws.app.state, "pairing", None)):
+        await ws.close(code=1008)
+        return
     # Guard accept — if the browser dropped before the handshake finished,
     # `accept()` raises immediately. Without this guard the receive loop
     # below would crash with "WebSocket is not connected. Need to call
@@ -66,6 +71,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     # Lock so two `chat` messages can't race the task swap.
     swap_lock = asyncio.Lock()
     send_lock = asyncio.Lock()  # uvicorn complains if two coros write concurrently
+    workbench = state.registry.services.get("workbench")
+    client_id = uuid.uuid4().hex
+    connected_at = time.time()
 
     async def safe_send(msg: dict) -> None:
         async with send_lock:
@@ -79,6 +87,35 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         "type": "info",
         "text": f"{cfg.A.name} online — {cfg.model.provider}/{cfg.model.model}",
     })
+    async def send_session():
+        if workbench:
+            item = workbench.store.session()
+            from ..extensions.resilience import public_history
+            await safe_send({"type": "session_state", "id": item["id"], "messages": public_history(item["history"])})
+
+    await send_session()
+
+    async def notify():
+        cursor = 0
+        while True:
+            if not authorized(ws, getattr(ws.app.state, "pairing", None)):
+                await ws.close(code=1008)
+                return
+            for event in workbench.store.events(cursor):
+                cursor = event["seq"]
+                if event["kind"] == "session_changed":
+                    if event["created"] >= connected_at:
+                        await send_session()
+                elif event["kind"] == "chat_finished":
+                    if event["created"] >= connected_at and event["payload"].get("source_id") != client_id and (brain_task is None or brain_task.done()):
+                        await send_session()
+                elif event["kind"] == "chat_user":
+                    continue
+                elif event["read_at"] is None and workbench.can_notify():
+                    await safe_send({"type": "info", "text": event["payload"].get("text", event["kind"]), "notification_id": cursor})
+            await asyncio.sleep(2)
+
+    notification_task = asyncio.create_task(notify()) if workbench else None
 
     async def cancel_running(reason: str = "superseded") -> None:
         nonlocal brain_task
@@ -87,6 +124,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             if not fut.done():
                 fut.set_result(False)
         pending.clear()
+        if (brain_task is None or brain_task.done()) and workbench and reason.startswith("user"):
+            shared = getattr(workbench, "active_task", None)
+            if shared and shared is not asyncio.current_task() and not shared.done():
+                shared.cancel()
+                await asyncio.gather(shared, return_exceptions=True)
         if brain_task and not brain_task.done():
             brain_task.cancel()
             try:
@@ -100,7 +142,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
     async def run_brain(text: str, attachments: list | None = None) -> None:
         try:
-            async for ev in orchestrator.handle_user_message(text, attachments=attachments):
+            async for ev in orchestrator.handle_user_message(text, attachments=attachments, source_id=client_id):
                 await _emit_event(safe_send, ev, pending)
         except asyncio.CancelledError:
             # Best-effort notify — connection may already be dead. Do NOT
@@ -110,7 +152,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             await safe_send({"type": "done"})
         except Exception as e:  # noqa: BLE001
             log.exception("brain error")
-            await safe_send({"type": "error", "text": str(e)})
+            from ..extensions.resilience import error_summary
+            error = error_summary(e)
+            await safe_send({"type": "error", "text": error["text"], "code": error["code"], "retryable": error["retryable"]})
             await safe_send({"type": "done"})
 
     try:
@@ -132,6 +176,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     break
                 raise
             mtype = msg.get("type")
+            if not authorized(ws, getattr(ws.app.state, "pairing", None)):
+                await ws.close(code=1008)
+                break
 
             if mtype == "ping":
                 await safe_send({"type": "pong"})
@@ -143,6 +190,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     fut.set_result(bool(msg.get("approved")))
 
             elif mtype == "agent":
+                if workbench and workbench.lock.locked():
+                    await safe_send({"type": "error", "text": "Futó feladat közben nem váltható agent."})
+                    continue
                 name = msg.get("name", "")
                 agent = agents.get(name)
                 if agent:
@@ -198,6 +248,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         except Exception:  # noqa: BLE001
             pass
     finally:
+        if notification_task:
+            notification_task.cancel()
+            await asyncio.gather(notification_task, return_exceptions=True)
         # Always tear down the running task on disconnect.
         if brain_task and not brain_task.done():
             brain_task.cancel()
@@ -213,9 +266,30 @@ async def _handle_command(send, line: str, orchestrator, memory, agents, cfg, ca
     parts = line[1:].split(None, 1) if line.startswith("/") else line.split(None, 1)
     cmd = parts[0].lower() if parts else ""
     arg = parts[1] if len(parts) > 1 else ""
+    workbench = orchestrator.registry.services.get("workbench")
+    if workbench and cmd in {"reset", "cleanslate", "agent", "mission", "session"} and workbench.lock.locked():
+        await send({"type": "error", "text": "Előbb állítsd le vagy várd meg a futó feladatot."})
+        return
 
     if cmd == "help":
-        await send({"type": "assistant", "text": HELP_TEXT})
+        await send({"type": "assistant", "text": HELP_TEXT + "\n  /sessions — mentett beszélgetések\n  /session <id> — munkamenetváltás\n  /skills — képességcsomagok\n  /diagnostics — NG állapot\n"})
+    elif cmd in {"sessions", "session", "skills", "diagnostics"} and workbench:
+        import json
+        if cmd == "session":
+            try:
+                async with workbench.lock:
+                    result = workbench.select(arg, orchestrator)
+                    result = {k: v for k, v in result.items() if k not in {"history", "summary"}}
+            except (ValueError, OSError) as exc:
+                await send({"type": "error", "text": str(exc)})
+                return
+        elif cmd == "sessions":
+            result = workbench.store.sessions()
+        elif cmd == "skills":
+            result = workbench.skills.list()
+        else:
+            result = workbench.diagnostics(orchestrator.registry)
+        await send({"type": "assistant", "text": json.dumps(result, ensure_ascii=False, indent=2)})
     elif cmd == "reset":
         orchestrator.reset()
         await send({"type": "info", "text": "conversation history reset"})
@@ -266,7 +340,7 @@ async def _handle_command(send, line: str, orchestrator, memory, agents, cfg, ca
             "- Persona: concise British systems assistant; calm, dry, protective.\n"
             f"- Model: `{cfg.model.provider}/{cfg.model.model}`.\n"
             f"- Tools: `{len(orchestrator.registry.all_tools())}` active under `{cfg.permissions.mode}` permissions.\n"
-            "- Voice: prefers British male voices, especially Ryan/George/Daniel-class voices.\n"
+            f"- Voice: `{cfg.voice.provider}` / `{cfg.voice.language}` / `{cfg.voice.edge_voice}`.\n"
             "- Safety: asks before destructive operations and refuses reckless commands."
         )
         await send({"type": "assistant", "text": text})
@@ -382,6 +456,6 @@ async def _emit_event(send, ev: Event, pending: dict[str, asyncio.Future]) -> No
     elif ev.kind is EventKind.ERROR:
         await send({"type": "error", "text": ev.text})
     elif ev.kind is EventKind.INFO:
-        await send({"type": "info", "text": ev.text})
+        await send({**ev.payload, "type": "info", "text": ev.text})
     elif ev.kind is EventKind.DONE:
         await send({"type": "done"})

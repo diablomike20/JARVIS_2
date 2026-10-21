@@ -13,6 +13,8 @@ def register(registry):
     cfg = registry.cfg
     backup_dir = cfg.abs_path(cfg.backups.dir)
     ignore = cfg.project.ignore_patterns
+    workbench = registry.services.get("workbench")
+    guard = workbench.guard if workbench else None
 
     @tool(
         name="list_dir",
@@ -55,7 +57,11 @@ def register(registry):
             return f"path does not exist: {p}"
         if p.is_dir():
             return f"is a directory: {p}"
-        return F.read_text(p, max_bytes=max_bytes)
+        before = guard.observe(p) if guard else None
+        text = F.read_text(p, max_bytes=max(1, min(max_bytes, 2_000_000)))
+        if guard and guard.observe(p) != before:
+            raise ValueError("A fájl olvasás közben megváltozott; olvasd újra.")
+        return text
 
     @tool(
         name="write_file",
@@ -67,18 +73,19 @@ def register(registry):
                 "path": {"type": "string"},
                 "content": {"type": "string"},
                 "backup": {"type": "boolean", "default": True},
+                "expected_sha256": {"type": "string"},
             },
             "required": ["path", "content"],
         },
         preview=lambda a: f"write {len(a.get('content','')):,} chars -> {a.get('path','')}",
     )
-    def write_file(path: str, content: str, backup: bool = True) -> str:
+    def write_file(path: str, content: str, backup: bool = True, expected_sha256: str | None = None) -> str:
         p = F.expand(path)
         backed = None
         if backup and p.exists() and cfg.backups.enabled:
             backed = F.backup_file(p, backup_dir)
             F.prune_backups(backup_dir, keep=cfg.backups.keep_last)
-        n = F.write_text(p, content)
+        n = guard.write(p, content, expected_sha256) if guard else F.write_text(p, content)
         msg = f"wrote {n} chars to {p}"
         if backed:
             msg += f" (backup: {backed.name})"
@@ -100,10 +107,29 @@ def register(registry):
     )
     def append_file(path: str, content: str) -> str:
         p = F.expand(path)
+        if guard:
+            current = p.read_text(encoding="utf-8") if p.exists() else ""
+            if p.exists() and cfg.backups.enabled:
+                F.backup_file(p, backup_dir)
+            guard.write(p, current + content)
+            return f"appended {len(content)} chars to {p}"
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:
             f.write(content)
         return f"appended {len(content)} chars to {p}"
+
+    @tool(
+        name="edit_file",
+        description="Exact text replacement with read-before-write and hash conflict checks. The old text must occur exactly once.",
+        permission=Permission.CAUTION,
+        parameters={"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]},
+    )
+    def edit_file(path: str, old_text: str, new_text: str) -> str:
+        p = F.expand(path)
+        text = p.read_text(encoding="utf-8")
+        if not old_text or text.count(old_text) != 1:
+            raise ValueError("A lecserélendő szöveg pontosan egyszer szerepeljen.")
+        return write_file(path, text.replace(old_text, new_text, 1))
 
     @tool(
         name="search_files",

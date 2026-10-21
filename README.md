@@ -1,3 +1,7 @@
+> **NG integráció külön ágon:** projektek és tartós munkamenetek, profilmemória, MCP/SKILL.md, agentcsapat, checkpointok, emlékeztetők, fejlesztői eszközök és párosított telefonos felület.
+> **Windows:** `NG_TELEPITES.cmd` → `run-app.bat` → ⚙ settings → MUNKATERÜLET · NG.
+> [Részletes magyar útmutató](docs/ng/BEALLITAS.md) · [Pontos átvételi állapot](docs/ng/ALLAPOT.md) · [Validáció](docs/ng/VALIDACIO.md)
+
 <div align="center">
 
 # J.A.R.V.I.S.

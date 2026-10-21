@@ -71,6 +71,9 @@ def create_app(
             pass
         # Wire the SSE log handler — must happen after the event loop is running.
         routes.install_log_handler()
+        workbench = registry.services.get("workbench")
+        if workbench:
+            await workbench.start(registry)
 
         # Apply VRAM hard cap before any GPU models load.
         from ..core.vram_manager import apply_vram_cap
@@ -115,16 +118,33 @@ def create_app(
 
         preload_task = asyncio.create_task(_preload())
 
-        yield
-
-        preload_task.cancel()
         try:
-            await preload_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        await orchestrator.brain.aclose()
+            yield
+        finally:
+            preload_task.cancel()
+            try:
+                await preload_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            if workbench:
+                await workbench.close()
+            await orchestrator.brain.aclose()
 
     app = FastAPI(title="JARVIS", version="0.2.0", lifespan=lifespan)
+    from ..extensions.pairing import Pairing, authorized
+    app.state.pairing = Pairing(cfg.abs_path("data/pairing.json"))
+
+    @app.middleware("http")
+    async def protect_network(request, call_next):
+        public = request.url.path in {"/phone", "/phone.js", "/api/phone/pair"}
+        if not public and not authorized(request, app.state.pairing):
+            return JSONResponse({"detail": "Párosítás vagy helyi hozzáférés szükséges."}, status_code=401)
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path.startswith("/api/workbench") or request.url.path.startswith("/api/phone"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -141,6 +161,10 @@ def create_app(
     app.state.agents = agents
 
     app.include_router(routes.router, prefix="/api")
+    from .workbench import router as workbench_router
+    app.include_router(workbench_router, prefix="/api/workbench")
+    from .phone import router as phone_router
+    app.include_router(phone_router)
     app.add_api_websocket_route("/ws", ws.websocket_endpoint)
 
     if web_dist and web_dist.exists():

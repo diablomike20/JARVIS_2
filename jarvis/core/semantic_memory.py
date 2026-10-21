@@ -77,12 +77,23 @@ class SemanticMemory:
         dim = len(vec) if vec else 0
         try:
             with self._conn() as c:
+                c.execute("BEGIN IMMEDIATE")
                 cur = c.execute(
                     "INSERT OR IGNORE INTO semantic_memory(kind,text,meta,embedding,dim,created_at) "
                     "VALUES(?,?,?,?,?,?)",
                     (kind, text, json.dumps(meta or {}), blob, dim, time.time()),
                 )
                 wrote = cur.rowcount > 0
+                # The legacy unique index is (kind,text). Keep its schema and
+                # data compatible while allowing the same explicitly learned
+                # fact to belong to more than one project.
+                if not wrote and meta and "project_id" in meta:
+                    row = c.execute("SELECT id,meta FROM semantic_memory WHERE kind=? AND text=?", (kind, text)).fetchone()
+                    existing = _safe_json(row["meta"])
+                    scopes = set(existing.get("project_ids", [existing.get("project_id", "default")]))
+                    scopes.add(meta["project_id"])
+                    existing["project_ids"] = sorted(scopes)
+                    c.execute("UPDATE semantic_memory SET meta=? WHERE id=?", (json.dumps(existing), row["id"]))
             if wrote:
                 log.debug("remembered [%s] %s", kind, text[:80])
             return wrote
@@ -92,6 +103,7 @@ class SemanticMemory:
 
     async def recall(
         self, query: str, k: int | None = None, min_score: float | None = None,
+        project_id: str | None = None,
     ) -> list[dict]:
         """Return up to k facts most cosine-similar to query, each with a
         ``score`` in [0,1]. Empty list if embeddings unavailable or no hits."""
@@ -116,6 +128,10 @@ class SemanticMemory:
 
         scored: list[tuple[float, dict]] = []
         for row in rows:
+            if project_id is not None:
+                scopes = row["meta"].get("project_ids", [row["meta"].get("project_id", "default")])
+                if project_id not in scopes and "global" not in scopes:
+                    continue
             v = row["_vec"]
             if v is None or v.shape != q.shape:
                 continue

@@ -17,6 +17,7 @@ log = logging.getLogger("jarvis.plugins.voice")
 
 
 def register(registry):
+    cfg = registry.cfg
     # Try to detect hardware/deps. Tools still register; they report unavailability.
     try:
         import speech_recognition as sr  # noqa: F401
@@ -42,10 +43,29 @@ def register(registry):
         preview=lambda a: f"TTS: {a.get('text','')[:60]}",
     )
     def speak(text: str) -> str:
+        if cfg.voice.provider in {"piper", "auto"} and cfg.voice.piper_enabled:
+            try:
+                import sys
+                if sys.platform == "win32":
+                    import winsound
+                    from ..server.routes import _synthesize_with_piper
+                    winsound.PlaySound(_synthesize_with_piper(text, cfg), winsound.SND_MEMORY)
+                    return f"Felolvasva magyar Piper hanggal: {len(text)} karakter."
+            except Exception as e:
+                log.warning("Piper backend playback failed: %s", e)
         if not _tts_ok:
             return "pyttsx3 not installed (pip install pyttsx3)"
         import pyttsx3
         engine = pyttsx3.init()
+        if cfg.voice.language.lower().startswith("hu"):
+            candidates = [v for v in engine.getProperty("voices") if
+                          "hungarian" in str(v.name).lower() or
+                          "hu-hu" in str(v.id).lower() or
+                          any("hu" in str(lang).lower() for lang in getattr(v, "languages", []))]
+            if not candidates:
+                engine.stop()
+                return "Nincs magyar rendszerhang. Használd a felület Piper-felolvasását."
+            engine.setProperty("voice", candidates[0].id)
         engine.say(text)
         engine.runAndWait()
         return f"spoke {len(text)} chars"
@@ -77,7 +97,7 @@ def register(registry):
                 f"Detail: {e}"
             )
         try:
-            return r.recognize_google(audio)
+            return r.recognize_google(audio, language=cfg.voice.language)
         except sr.UnknownValueError:
             return "(could not understand audio)"
         except sr.RequestError as e:

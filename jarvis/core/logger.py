@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,19 @@ from rich.logging import RichHandler
 from ..config import Config
 
 _configured = False
+
+
+class RedactingFilter(logging.Filter):
+    def filter(self, record):
+        from ..extensions.resilience import redact
+        message = record.getMessage()
+        if record.exc_info:
+            message += "\n" + "".join(traceback.format_exception(*record.exc_info))
+        record.msg = redact(message)
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        return True
 
 
 def setup_logging(cfg: Config) -> logging.Logger:
@@ -35,6 +49,7 @@ def setup_logging(cfg: Config) -> logging.Logger:
         )
         rich_handler.setLevel(cfg.logging.level)
         rich_handler.setFormatter(logging.Formatter("%(message)s"))
+        rich_handler.addFilter(RedactingFilter())
 
         file_handler = RotatingFileHandler(
             log_file, maxBytes=2_000_000, backupCount=5, encoding="utf-8"
@@ -43,6 +58,7 @@ def setup_logging(cfg: Config) -> logging.Logger:
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
         )
+        file_handler.addFilter(RedactingFilter())
 
         root.addHandler(rich_handler)
         root.addHandler(file_handler)
@@ -75,10 +91,11 @@ class ActionLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, action: str, **fields: Any) -> None:
+        from ..extensions.resilience import redact
         entry = {"ts": time.time(), "action": action, **fields}
         try:
             with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, default=str) + "\n")
+                f.write(json.dumps(redact(entry), default=str) + "\n")
         except OSError:
             # never let logging crash the assistant
             pass

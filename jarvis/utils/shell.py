@@ -38,52 +38,17 @@ async def run_command(
     if env:
         final_env.update(env)
 
+    from ..extensions.processes import ProcessManager
     if sys.platform == "win32":
-        if shell == "powershell":
-            argv = ["powershell", "-NoProfile", "-Command", cmd]
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=cwd_str,
-                env=final_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        else:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                cwd=cwd_str,
-                env=final_env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+        command, args = ("powershell", ["-NoProfile", "-Command", cmd]) if shell == "powershell" else (os.environ.get("COMSPEC", "cmd.exe"), ["/d", "/s", "/c", cmd])
     else:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=cwd_str,
-            env=final_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return CommandResult(
-            cmd=cmd,
-            cwd=cwd_str,
-            returncode=proc.returncode if proc.returncode is not None else -1,
-            stdout=stdout.decode("utf-8", errors="replace"),
-            stderr=stderr.decode("utf-8", errors="replace"),
-        )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        return CommandResult(
-            cmd=cmd,
-            cwd=cwd_str,
-            returncode=-1,
-            stdout="",
-            stderr=f"[timeout after {timeout}s]",
-            timed_out=True,
-        )
+        command, args = (shell or "/bin/sh"), ["-c", cmd]
+    manager = ProcessManager()
+    result = await manager.run(command, args, cwd_str, max(1, min(timeout, 1800)), final_env)
+    stdout = "".join(text for channel, text in result["output"] if channel == "stdout")
+    stderr = "".join(text for channel, text in result["output"] if channel == "stderr")
+    if result.get("timed_out"):
+        stderr += f"\n[timeout after {timeout}s]"
+    return CommandResult(cmd=cmd, cwd=cwd_str,
+                         returncode=result["returncode"] if result["returncode"] is not None else -1,
+                         stdout=stdout, stderr=stderr, timed_out=result.get("timed_out", False))

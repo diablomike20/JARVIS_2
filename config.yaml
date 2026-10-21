@@ -5,6 +5,7 @@
 
 A:
   name: JARVIS
+  language: hu
   persona: |
     You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — running
     as the user's local mission-control AI. Not a chatbot. Not a search box.
@@ -186,30 +187,24 @@ ui:
   refresh_interval_ms: 1500
 
 voice:
+  language: hu-HU
+  stt_language: hu
+  stt_initial_prompt: "Magyar beszéd. Jarvis, nyisd meg a fájlt, keress az interneten, készíts képet."
   # Phrase that wakes the microphone (restart backend after changing).
   wake_word: "Hey JARVIS"
-  # JARVIS TTS preference order (auto = first that initialises):
-  #   1. piper   — community Paul-Bettany-style model (jgkawell/jarvis).
-  #                Closest to the real JARVIS voice. Local, free, fan-use only.
-  #                Set piper_enabled: true + install piper-tts to activate.
-  #   2. nvidia  — NVIDIA Riva cloud (needs NVIDIA_API_KEY).
-  #   3. edge    — Microsoft en-GB-RyanNeural (cinematic British male).
-  provider: auto
-  edge_voice: en-GB-ThomasNeural    # deeper, more cinematic British male — naturally Bettany-like
-  edge_rate: "-6%"                  # slight slow-down for gravitas, not so heavy it muddies
-  edge_pitch: "+0Hz"                # native pitch — edge-tts neural models lose fidelity when pitch-shifted
-
-  # Piper TTS (local, closest to MCU JARVIS voice).
-  # Install:  pip install piper-tts
-  # Model :   huggingface.co/jgkawell/jarvis  →  download en_GB-jarvis-medium.onnx
-  #           place at:  data/voices/jarvis.onnx  (+ matching .onnx.json)
-  piper_enabled: true
-  piper_model:  data/voices/jarvis.onnx        # HIGH quality (114 MB) — closest to MCU JARVIS
+  # Természetesebb magyar alap: Microsoft Tamás (internet szükséges).
+  # A helyi Piper Imre a Beállítások > Munkaterület részen választható.
+  provider: edge_tts
+  edge_voice: hu-HU-TamasNeural
+  edge_rate: "+0%"
+  edge_pitch: "+0Hz"
+  piper_enabled: false
+  piper_model: data/voices/hu_HU-imre-medium.onnx
   piper_speaker: 0
-  piper_length_scale: 1.0                     # RESTORED to normal speed (1.0 = standard)
-  piper_noise_scale: 0.55                      # lower = smoother, more even tone
-  piper_noise_w_scale: 0.72                    # phoneme-timing variability
-  piper_volume: 1.15                           # mild boost
+  piper_length_scale: 1.0
+  piper_noise_scale: 0.55
+  piper_noise_w_scale: 0.72
+  piper_volume: 1.0
 
   riva_enabled: false
   riva_server: grpc.nvcf.nvidia.com:443
@@ -315,3 +310,27 @@ ultimate:
 
   # — Gorgeous: voice-reactive HUD visuals (frontend reads via /health) —
   reactive_visuals: true
+
+# NG-képességek a JARVIS_2 saját motorjához illesztve.
+# Az üres külső adapterlisták nem indítanak és nem töltenek le programot.
+ng:
+  enabled: true
+  skill_dirs: [skills]
+  timezone: Europe/Budapest
+  quiet_start: 22
+  quiet_end: 8
+  notifications_per_hour: 8
+  poll_seconds: 15
+  watch_paths: []
+  watch_git: []
+  system_alerts: false
+  daily_briefing: false
+  briefing_hour: 9
+  calendar_files: []
+  imap_accounts: {}
+  mcp_servers: {}
+  applications: {}
+  dev_servers: {}
+  language_servers: {}
+  max_agents: 4
+  agent_timeout_seconds: 180

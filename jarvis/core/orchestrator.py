@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from typing import Any, AsyncIterator, TYPE_CHECKING
 
 import json
@@ -103,6 +104,10 @@ class Orchestrator:
         # in-flight task. Heavy tools (image_generate, image_to_3d,
         # text_to_3d) protect their work via UNINTERRUPTIBLE_TOOLS below.
         self.busy_tool: str | None = None
+        self._request_lock = asyncio.Lock()
+        self._turn_text = ""
+        self._repeat_guard = None
+        self._file_owner = uuid.uuid4().hex
 
         # Default emit-hook: lift tool results carrying a __JARVIS_MEDIA__
         # JSON payload into a proper MEDIA event. This is what makes
@@ -157,6 +162,15 @@ class Orchestrator:
         if mem_block:
             persona = "\n\n".join([persona, mem_block])
         tools_doc = self.registry.documentation()
+        workbench = self.registry.services.get("workbench")
+        if workbench:
+            persona += "\n\n" + workbench.prompt(self._turn_text)
+        if self.cfg.A.language.lower().startswith("hu"):
+            persona += (
+                "\n\nVálasznyelv: magyar. Mindig természetes magyar mondatokban válaszolj, "
+                "kivéve ha a felhasználó kifejezetten más nyelvet kér. "
+                "A kódot, fájlneveket és eszközazonosítókat ne fordítsd le."
+            )
         return self.brain.build_system_prompt(persona, tools_doc)
 
     def _recalled_block(self) -> str:
@@ -182,7 +196,8 @@ class Orchestrator:
         if not self._ultimate_on("semantic_memory"):
             return []
         try:
-            return await self.semantic.recall(user_text)
+            workbench = self.registry.services.get("workbench")
+            return await self.semantic.recall(user_text, project_id=workbench.active["project_id"] if workbench else None)
         except Exception:  # noqa: BLE001
             log.exception("semantic recall failed")
             return []
@@ -382,7 +397,11 @@ class Orchestrator:
             return
         kind, text = fact
         try:
-            wrote = await self.semantic.remember(text, kind=kind, meta={"source": "auto"})
+            workbench = self.registry.services.get("workbench")
+            meta = {"source": "auto"}
+            if workbench:
+                meta["project_id"] = workbench.active["project_id"]
+            wrote = await self.semantic.remember(text, kind=kind, meta=meta)
             if wrote:
                 log.info("auto-remembered [%s] %s", kind, text[:80])
         except Exception:  # noqa: BLE001
@@ -390,6 +409,12 @@ class Orchestrator:
 
     def reset(self) -> None:
         self._history.clear()
+        self._running_summary = ""
+        self._current_plan = ""
+        self._recalled = []
+        workbench = self.registry.services.get("workbench")
+        if workbench:
+            workbench.save(self)
 
     def set_agent(self, agent: Agent | None) -> None:
         self._active_agent = agent
@@ -404,6 +429,48 @@ class Orchestrator:
 
     # ------------------------------------------------------------------
     async def handle_user_message(
+        self,
+        user_text: str,
+        attachments: list[dict] | None = None,
+        source_id: str = "",
+    ) -> AsyncIterator[Event]:
+        # One shared orchestrator may have several browser/phone sockets.
+        # A socket-local lock does not protect its history or selected project.
+        from ..extensions.resilience import RepeatGuard, repair_history
+        workbench = self.registry.services.get("workbench")
+        lock = workbench.lock if workbench else self._request_lock
+        async with lock:
+            from ..extensions.files import file_owner
+            owner_token = file_owner.set(self._file_owner)
+            if workbench:
+                workbench.active_task = asyncio.current_task()
+            self._turn_text = user_text
+            self._history = repair_history(self._history)
+            self._repeat_guard = RepeatGuard()
+            if workbench:
+                workbench.save(self, "running")
+            status = "idle"
+            try:
+                async for event in self._handle_user_message(user_text, attachments):
+                    if workbench and event.kind not in {EventKind.STREAM_DELTA, EventKind.THINKING}:
+                        workbench.save(self, "running")
+                    yield event
+            except (asyncio.CancelledError, GeneratorExit):
+                status = "interrupted"
+                raise
+            except Exception:
+                status = "error"
+                raise
+            finally:
+                self._history = repair_history(self._history)
+                if workbench:
+                    workbench.save(self, status)
+                    workbench.active_task = None
+                    workbench.store.publish("chat_finished", {"session_id": workbench.active["id"], "source_id": source_id})
+                self._repeat_guard = None
+                file_owner.reset(owner_token)
+
+    async def _handle_user_message(
         self,
         user_text: str,
         attachments: list[dict] | None = None,
@@ -556,7 +623,8 @@ class Orchestrator:
                             yield Event(EventKind.STREAM_DELTA, text=piece)
                         break
                 reply: BrainReply = stream_task.result()
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, GeneratorExit):
+                stream_began = False
                 # Cancel + drain BOTH child tasks so neither leaks as
                 # "pending Task destroyed" warnings on GC.
                 stream_task.cancel()
@@ -753,21 +821,30 @@ class Orchestrator:
     async def _invoke_tool(self, tc: ToolCall) -> AsyncIterator[Event]:
         tool: Tool | None = self.registry.get(tc.name)
         if tool is None:
+            if tc.call_id:
+                self._history.append({"role": "tool", "tool_call_id": tc.call_id, "name": tc.name, "content": f"unknown tool: {tc.name}"})
+            else:
+                self._history.append({"role": "user", "content": f'<tool_result name="{tc.name}" ok="false">unknown tool</tool_result>'})
             yield Event(
                 EventKind.TOOL_RESULT,
                 text=f"unknown tool: {tc.name}",
                 payload={"tool": tc.name, "ok": False},
             )
-            self._history.append(
-                {
-                    "role": "user",
-                    "content": f"<tool_result name=\"{tc.name}\" ok=\"false\">"
-                               f"unknown tool</tool_result>",
-                }
-            )
             return
 
         preview = tool.preview(tc.args)
+        # Pre-hooks run before permission evaluation, so a modified path or
+        # command cannot inherit approval for different arguments.
+        try:
+            if self._repeat_guard:
+                self._repeat_guard.check(tool.name, tc.args)
+            tc.args = await self.hooks.run_pre(tool.name, tc.args)
+            preview = tool.preview(tc.args)
+        except PermissionError as exc:
+            self._history.append({"role": "tool", "tool_call_id": tc.call_id, "content": str(exc)} if tc.call_id else
+                                 {"role": "user", "content": f'<tool_result name="{tool.name}" ok="false">{exc}</tool_result>'})
+            yield Event(EventKind.TOOL_RESULT, text=str(exc), payload={"tool": tool.name, "ok": False})
+            return
         req = PermissionRequest(
             tool=tool.name, args=tc.args, permission=tool.permission, preview=preview
         )
@@ -790,7 +867,7 @@ class Orchestrator:
             try:
                 approved = await fut
             except asyncio.CancelledError:
-                approved = False
+                raise
             if not approved:
                 decision = Decision.DENY
             else:
@@ -804,7 +881,10 @@ class Orchestrator:
                 text=denial,
                 payload={"tool": tool.name, "ok": False, "denied": True},
             )
-            self._history.append(
+            if tc.call_id:
+                self._history.append({"role": "tool", "tool_call_id": tc.call_id, "content": denial})
+            else:
+                self._history.append(
                 {
                     "role": "user",
                     "content": f"<tool_result name=\"{tool.name}\" ok=\"false\">"
@@ -821,7 +901,7 @@ class Orchestrator:
         loop = asyncio.get_running_loop()
         prog_q: asyncio.Queue = asyncio.Queue()
 
-        def _progress_report(msg: str) -> None:
+        def _progress_report(msg) -> None:
             loop.call_soon_threadsafe(prog_q.put_nowait, msg)
 
         set_reporter(_progress_report)
@@ -829,7 +909,7 @@ class Orchestrator:
         self.busy_tool = tool.name
         try:
             # PRE hook can mutate args or veto with PermissionError
-            args_after_pre = await self.hooks.run_pre(tool.name, tc.args)
+            args_after_pre = tc.args
 
             # Run the tool as an async task so we can concurrently drain the
             # progress queue and emit TASK_PROGRESS events in real-time.
@@ -845,7 +925,7 @@ class Orchestrator:
                 if get_task in done_set:
                     prog_msg = get_task.result()
                     get_task = None
-                    yield Event(EventKind.TASK_PROGRESS, text=prog_msg, payload={"tool": tool.name})
+                    yield prog_msg if isinstance(prog_msg, Event) else Event(EventKind.TASK_PROGRESS, text=prog_msg, payload={"tool": tool.name})
             if get_task is not None and not get_task.done():
                 get_task.cancel()
                 try:
@@ -854,7 +934,8 @@ class Orchestrator:
                     pass
             # Drain any remaining progress messages flushed before task finished
             while not prog_q.empty():
-                yield Event(EventKind.TASK_PROGRESS, text=prog_q.get_nowait(), payload={"tool": tool.name})
+                progress = prog_q.get_nowait()
+                yield progress if isinstance(progress, Event) else Event(EventKind.TASK_PROGRESS, text=progress, payload={"tool": tool.name})
 
             result = tool_task.result()  # re-raises if tool raised
             # POST hook can mutate result
@@ -866,6 +947,14 @@ class Orchestrator:
             ok = False
             err = result
             log.info("tool '%s' blocked by pre-hook: %s", tool.name, e)
+        except (asyncio.CancelledError, GeneratorExit):
+            # Cancelling the parent generator must cancel its active tool as
+            # well, otherwise stale work can mutate another session later.
+            for child in (locals().get("tool_task"), locals().get("get_task")):
+                if child is not None and not child.done():
+                    child.cancel()
+                    await asyncio.gather(child, return_exceptions=True)
+            raise
         except Exception as e:  # noqa: BLE001
             result = f"{type(e).__name__}: {e}"
             ok = False
@@ -887,6 +976,8 @@ class Orchestrator:
         )
 
         result_text = result if isinstance(result, str) else _to_str(result)
+        if self._repeat_guard:
+            self._repeat_guard.outcome(tool.name, tc.args, result_text)
 
         yield Event(EventKind.TASK_END, text=tool.name, payload={"ok": ok, "duration_s": dt})
 
@@ -1018,6 +1109,15 @@ def _extract_durable_fact(user_text: str) -> tuple[str, str] | None:
     t = (user_text or "").strip()
     if len(t) < 4 or len(t) > 400:
         return None
+    if re.search(r"\b(?:ne jegyezd meg|ne mentsd el|ne tárold)\b", t, re.I):
+        return None
+    hu = re.search(r"\b(?:jegyezd meg|emlékezz rá|mentsd el)(?:\s*,?\s*hogy)?\s*[:,]?\s*(.+)", t, re.I)
+    if hu and hu.group(1).strip():
+        return ("fact", hu.group(1).strip()[:300])
+    if re.search(r"\b(?:azt szeretem|jobban szeretem|azt kedvelem|nem szeretem|a kedvencem)\b", t, re.I):
+        return ("preference", t[:300])
+    if re.search(r"\b(?:a nevem|engem .{1,60} hívnak|lakom|dolgozom|használok)\b", t, re.I):
+        return ("fact", t[:300])
     m = _REMEMBER_RE.search(t)
     if m and m.group(1).strip():
         return ("fact", m.group(1).strip()[:300])

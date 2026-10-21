@@ -12,9 +12,10 @@ python-dotenv>=1.0.0
 rich>=13.7.0
 
 # Voice
-edge-tts>=6.1.12                  # online Microsoft neural TTS fallback (en-GB Ryan / Thomas)
-piper-tts>=1.4.2                  # local JARVIS voice (jgkawell/jarvis ONNX)
-faster-whisper>=1.0.0             # server-side STT
+edge-tts>=6.1.12                  # online Hungarian neural speech (Tamas / Noemi)
+piper-tts>=1.4.2,<2               # optional local Hungarian Imre ONNX
+faster-whisper>=1.1,<1.3             # multilingual server-side STT
+av>=11,<17                        # compatible decode_audio metadata_errors API
 nvidia-riva-client>=2.25.0        # optional NVIDIA Riva cloud TTS
 SpeechRecognition>=3.10.0         # optional voice_tools listen/microphone_status
 pyttsx3>=2.90                     # optional voice_tools local speak fallback
@@ -54,3 +55,7 @@ onnxruntime>=1.18.0
 
 # OPTIONAL - GPU acceleration for Whisper STT (cuFFT/cuBLAS/cuDNN DLLs):
 #   pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12
+
+# NG workbench timezone database (Windows has no system IANA database).
+tzdata>=2025.2
+# Optional MCP: pip install -r requirements-ng.txt

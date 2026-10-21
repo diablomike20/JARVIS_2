@@ -10,6 +10,9 @@ data/memory.db
 data/memory.db-*
 data/logs/
 data/backups/
+data/checkpoints/
+data/pairing.json
+.venv/
 data/project_backups/
 data/sandbox/
 data/generated/

@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../../lib/store";
 import { resetAllLayouts } from "./Floating";
+import WorkbenchPanel from "./WorkbenchPanel";
 
 export default function Settings() {
   const health = useStore((s) => s.health);
@@ -74,6 +75,8 @@ export default function Settings() {
             onChange={setBargeIn}
           />
         </Section>
+
+        <WorkbenchPanel />
 
         <Section title="DISPLAY">
           <ButtonRow

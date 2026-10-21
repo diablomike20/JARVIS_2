@@ -47,7 +47,17 @@ class Tool:
         return f"{self.name}({snippet})"
 
     async def invoke(self, args: dict[str, Any]) -> Any:
-        result = self.handler(**(args or {}))
+        if inspect.iscoroutinefunction(self.handler):
+            return await self.handler(**(args or {}))
+        # File, IMAP and OS adapters must not block the confirmation/socket
+        # event loop. A Python worker thread cannot be forcibly killed: wait
+        # for its handler before releasing the enclosing session lock.
+        task = asyncio.create_task(asyncio.to_thread(self.handler, **(args or {})))
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
         if inspect.isawaitable(result):
             return await result
         return result

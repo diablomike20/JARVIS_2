@@ -13,8 +13,7 @@ from __future__ import annotations
 import contextvars
 from typing import Callable, Optional
 
-# ContextVar is propagated to asyncio.run_in_executor threads automatically
-# (Python 3.7+ copies the current context into child tasks/threads).
+# ContextVar is propagated by asyncio.to_thread and by child tasks.
 _reporter: contextvars.ContextVar[Optional[Callable[[str], None]]] = \
     contextvars.ContextVar("jarvis_progress_reporter", default=None)
 
@@ -34,3 +33,8 @@ def report(msg: str) -> None:
             fn(msg)
         except Exception:  # noqa: BLE001
             pass
+
+
+def current_reporter():
+    """Capture the parent's event/progress sink before running nested tools."""
+    return _reporter.get(None)

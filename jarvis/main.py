@@ -74,6 +74,9 @@ def build_services(cfg_path: str | None):
         "brain": brain,
         "semantic": semantic,
     }
+    if cfg.ng.enabled:
+        from .extensions.runtime import Workbench
+        services["workbench"] = Workbench(cfg, memory)
     registry = PluginRegistry(cfg, services=services)
     registry.load_all()
 
@@ -91,6 +94,8 @@ def build_services(cfg_path: str | None):
     # Expose the orchestrator back to plugins (specifically the parallel_tasks
     # swarm tool, which fans calls out through orchestrator._invoke_tool).
     registry.services["orchestrator"] = orchestrator
+    if "workbench" in services:
+        services["workbench"].restore(orchestrator)
     agents = build_default_registry(cfg)
 
     return cfg, logger, brain, registry, memory, permissions, actions, orchestrator, agents

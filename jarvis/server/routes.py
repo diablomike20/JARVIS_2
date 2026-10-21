@@ -174,7 +174,7 @@ async def stream_logs(request: Request):
         },
     )
 
-JARVIS_TTS_VOICE = "en-GB-ThomasNeural"
+JARVIS_TTS_VOICE = "hu-HU-TamasNeural"
 NVIDIA_WAVEGLOW_URL = (
     "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tlt-jarvis/"
     "models/speechsynthesis_waveglow?version=deployable_v1.0"
@@ -182,7 +182,7 @@ NVIDIA_WAVEGLOW_URL = (
 
 
 @router.post("/stt")
-async def speech_to_text(audio: UploadFile = File(...)):
+async def speech_to_text(request: Request, audio: UploadFile = File(...)):
     """Receive audio from browser MediaRecorder, transcribe with Whisper."""
     import asyncio
     data = await audio.read()
@@ -205,8 +205,9 @@ async def speech_to_text(audio: UploadFile = File(...)):
     #   * temperature=0 — deterministic greedy decode, no sampled fallback.
     #   * initial_prompt biases the LM away from the YouTube-style outro
     #     phrases and toward technical assistant vocabulary.
+    cfg, *_ = _services(request)
     _WHISPER_KW: dict = dict(
-        language="en",
+        language=cfg.voice.stt_language or None,
         beam_size=1,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400, "threshold": 0.45},
@@ -215,10 +216,7 @@ async def speech_to_text(audio: UploadFile = File(...)):
         log_prob_threshold=-1.0,
         compression_ratio_threshold=2.4,
         temperature=0.0,
-        initial_prompt=(
-            "JARVIS command. Search, generate image, open page, run code, "
-            "show news, list videos, open the file."
-        ),
+        initial_prompt=cfg.voice.stt_initial_prompt,
     )
 
     def _post_process(text: str) -> str:
@@ -748,7 +746,7 @@ class PersonaBody(BaseModel):
 
 class TTSBody(BaseModel):
     text: str
-    voice: str = JARVIS_TTS_VOICE
+    voice: str = ""
 
 
 @router.get("/persona")
@@ -773,14 +771,14 @@ async def tts_status(request: Request):
     piper_ready = _piper_available(cfg)
 
     if piper_ready:
-        provider, label, voice, lang = "piper", "JARVIS (Piper, community model)", "jarvis", "en-GB"
+        provider, label, voice, lang = "piper", "Piper — " + Path(cfg.voice.piper_model).stem, Path(cfg.voice.piper_model).stem, cfg.voice.language
     elif riva_ready:
         provider, label, voice, lang = "nvidia-riva", "NVIDIA Riva / Jarvis TTS", cfg.voice.riva_voice, cfg.voice.riva_language_code
     else:
         provider = "edge-tts"
-        label = "Microsoft Ryan Neural (British male)"
+        label = "Microsoft — " + cfg.voice.edge_voice
         voice = cfg.voice.edge_voice
-        lang = "en-GB"
+        lang = "-".join(voice.split("-")[:2])
 
     return {
         "available": edge_available or riva_ready or piper_ready,
@@ -794,14 +792,14 @@ async def tts_status(request: Request):
                 "enabled":  bool(getattr(cfg.voice, "piper_enabled", False)),
                 "available": piper_ready,
                 "model":    str(cfg.abs_path(cfg.voice.piper_model)),
-                "note":     "Install: pip install piper-tts. Model: huggingface.co/jgkawell/jarvis (en_GB-jarvis-medium.onnx).",
+                "note":     "Helyi Piper hangmodell. A modell és a hozzá tartozó .onnx.json fájl is szükséges.",
             },
             "edge_tts": {
                 "available": edge_available,
                 "voice": cfg.voice.edge_voice,
                 "rate":  cfg.voice.edge_rate,
                 "pitch": cfg.voice.edge_pitch,
-                "label": "Microsoft Ryan Neural",
+                "label": "Microsoft — " + cfg.voice.edge_voice,
             },
             "nvidia_riva": {
                 "enabled": _riva_enabled(cfg),
@@ -824,7 +822,8 @@ def _piper_available(cfg) -> bool:
         import piper.voice  # type: ignore  # noqa: F401
     except Exception:
         return False
-    return Path(cfg.abs_path(cfg.voice.piper_model)).exists()
+    path = Path(cfg.abs_path(cfg.voice.piper_model))
+    return path.is_file() and Path(str(path) + ".json").is_file()
 
 
 @router.post("/tts")
@@ -839,8 +838,8 @@ async def tts(request: Request, body: TTSBody):
     # 1. Piper — community JARVIS model (closest to MCU voice).
     if _should_try_piper(cfg):
         try:
-            audio = _synthesize_with_piper(text, cfg)
-            return Response(audio, media_type="audio/wav", headers={"X-JARVIS-TTS": "piper"})
+            audio = await asyncio.to_thread(_synthesize_with_piper, text, cfg)
+            return Response(audio, media_type="audio/wav", headers={"X-JARVIS-TTS": "piper", "X-JARVIS-Voice": Path(cfg.voice.piper_model).stem, "Content-Language": cfg.voice.language})
         except Exception as e:  # noqa: BLE001
             tts_log.warning("Piper TTS failed (%s) — falling back", e)
 
@@ -853,7 +852,7 @@ async def tts(request: Request, body: TTSBody):
             tts_log.warning("Riva TTS failed (%s) — falling back to edge-tts", e)
 
     # 3. Edge TTS (Microsoft Ryan / Thomas Neural)
-    voice = body.voice or cfg.voice.edge_voice or "en-GB-ThomasNeural"
+    voice = body.voice or cfg.voice.edge_voice or JARVIS_TTS_VOICE
     rate  = cfg.voice.edge_rate  or "-6%"
     pitch = cfg.voice.edge_pitch or "+0Hz"
     try:
@@ -873,13 +872,14 @@ async def tts(request: Request, body: TTSBody):
     return StreamingResponse(
         stream_audio(),
         media_type="audio/mpeg",
-        headers={"X-JARVIS-TTS": "edge"},
+        headers={"X-JARVIS-TTS": "edge", "X-JARVIS-Voice": voice, "Content-Language": "-".join(voice.split("-")[:2])},
     )
 
 
 # --- Piper TTS (local, closest match to MCU JARVIS) ------------------------
 _piper_voice = None
-_piper_failed = False
+_piper_model_path = None
+_piper_lock = threading.Lock()
 
 
 def _should_try_piper(cfg) -> bool:
@@ -890,36 +890,30 @@ def _should_try_piper(cfg) -> bool:
 
 
 def _synthesize_with_piper(text: str, cfg) -> bytes:
-    global _piper_voice, _piper_failed
-    if _piper_failed:
-        raise RuntimeError("piper init failed previously")
-    if _piper_voice is None:
-        try:
-            from piper.voice import PiperVoice  # type: ignore
-        except Exception as e:  # noqa: BLE001
-            _piper_failed = True
-            raise RuntimeError(f"piper-tts not installed: {e}")
-        model_path = cfg.abs_path(cfg.voice.piper_model)
-        if not Path(model_path).exists():
-            _piper_failed = True
-            raise RuntimeError(f"piper model not found: {model_path}")
-        _piper_voice = PiperVoice.load(str(model_path))
-
-    # piper-tts 1.4+ API: synthesize_wav writes a full WAV stream. Full
-    # prosody controls — length, noise, phoneme-timing variability, volume.
-    from piper.config import SynthesisConfig  # type: ignore
-    syn_cfg = SynthesisConfig(
-        speaker_id=cfg.voice.piper_speaker if _piper_voice.config.num_speakers > 1 else None,
-        length_scale=cfg.voice.piper_length_scale,
-        noise_scale=getattr(cfg.voice, "piper_noise_scale", None),
-        noise_w_scale=getattr(cfg.voice, "piper_noise_w_scale", None),
-        volume=getattr(cfg.voice, "piper_volume", 1.0),
-        normalize_audio=True,
-    )
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        _piper_voice.synthesize_wav(text, wf, syn_config=syn_cfg)
-    return buf.getvalue()
+    global _piper_voice, _piper_model_path
+    # Concurrent streaming requests share one ONNX voice. Serialize synthesis,
+    # and retry loading after a missing model is installed without a restart.
+    with _piper_lock:
+        from piper.voice import PiperVoice
+        from piper.config import SynthesisConfig
+        model_path = str(Path(cfg.abs_path(cfg.voice.piper_model)).resolve())
+        if not Path(model_path).is_file() or not Path(model_path + ".json").is_file():
+            raise RuntimeError("A Piper hangmodell vagy a .onnx.json fájl hiányzik: " + model_path)
+        if _piper_voice is None or _piper_model_path != model_path:
+            voice = PiperVoice.load(model_path)
+            _piper_voice, _piper_model_path = voice, model_path
+        syn_cfg = SynthesisConfig(
+            speaker_id=cfg.voice.piper_speaker if _piper_voice.config.num_speakers > 1 else None,
+            length_scale=cfg.voice.piper_length_scale,
+            noise_scale=cfg.voice.piper_noise_scale,
+            noise_w_scale=cfg.voice.piper_noise_w_scale,
+            volume=cfg.voice.piper_volume,
+            normalize_audio=True,
+        )
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            _piper_voice.synthesize_wav(text, wf, syn_config=syn_cfg)
+        return buf.getvalue()
 
 
 def _edge_tts_available() -> bool:
@@ -1255,6 +1249,9 @@ def _host(url: str) -> str:
 @router.post("/cleanslate")
 async def clean_slate(request: Request):
     cfg, orch, registry, memory, agents = _services(request)
+    workbench = registry.services.get("workbench")
+    if workbench and workbench.lock.locked():
+        return JSONResponse({"error": "Előbb állítsd le a futó feladatot."}, status_code=409)
     orch.reset()
     return {"ok": True, "message": "Clean slate executed. Conversation history wiped. Memory preserved."}
 

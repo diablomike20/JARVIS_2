@@ -6,6 +6,9 @@
 import { useStore, type VoiceProfile } from "./store";
 import { getHealth } from "./api";
 import { detectWake, stripWakeWord, normalizeWakeWord } from "./wakeWord";
+import { isSpeechStop, isSleepRequest, SpeechRequests, OrderedSpeech } from "./speechControl";
+const speechRequests = new SpeechRequests();
+const orderedSpeech = new OrderedSpeech<Blob>();
 
 function configuredWakeWord(): string {
   return normalizeWakeWord(useStore.getState().health?.voice?.wake_word);
@@ -65,6 +68,7 @@ function voiceScore(voice: SpeechSynthesisVoice): number {
   const label = `${voice.name} ${voice.lang}`;
   const matcherIndex = JARVIS_VOICE_MATCHERS.findIndex((re) => re.test(label));
   let score = matcherIndex >= 0 ? 120 - matcherIndex * 10 : 0;
+  if (/^hu(?:-|_)/i.test(voice.lang)) score += 1000;
   if (/en-GB/i.test(label)) score += 35;
   if (/(?:natural|online|neural)/i.test(label)) score += 25;
   if (LOWER_CONFIDENCE_VOICES.test(label)) score -= 20;
@@ -96,11 +100,7 @@ function pickVoice(): SpeechSynthesisVoice | null {
   if (cachedVoice) return cachedVoice;
   const voices = SYNTH.getVoices();
   const ranked = [...voices].sort((a, b) => voiceScore(b) - voiceScore(a));
-  const prefer = ranked.find((v) => voiceScore(v) > 0)
-              || voices.find((v) => v.lang === "en-GB")
-              || voices.find((v) => v.lang.startsWith("en"))
-              || voices[0]
-              || null;
+  const prefer = ranked.find((v) => /^hu(?:-|_)/i.test(v.lang)) || null;
   cachedVoice = prefer ?? null;
   publishVoiceProfile(cachedVoice);
   return cachedVoice;
@@ -127,8 +127,8 @@ async function refreshServerVoiceProfile(): Promise<void> {
     const status = await resp.json();
     if (status?.available) {
       useStore.getState().setVoiceProfile({
-        name: status.label || "Microsoft Ryan Neural",
-        lang: status.lang || "en-GB",
+        name: status.label || "Magyar beszéd",
+        lang: status.lang || "hu-HU",
         tier: "cinematic",
       });
     }
@@ -139,7 +139,7 @@ async function refreshServerVoiceProfile(): Promise<void> {
 
 function cleanSpeechText(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, " code block ")
+    .replace(/```[\s\S]*?```/g, " kódrészlet ")
     .replace(/[*_`#>~]/g, "")
     .replace(/\[(.*?)\]\(.*?\)/g, "$1")
     .trim();
@@ -157,12 +157,14 @@ function stopServerAudio() {
 }
 
 async function speakWithServerTts(clean: string): Promise<boolean> {
+  const request = speechRequests.begin();
   try {
     console.log("[TTS] requesting server TTS…");
     const resp = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: clean }),
+      signal: request.signal,
     });
     console.log("[TTS] server response:", resp.status, resp.headers.get("content-type"));
     if (!resp.ok) {
@@ -170,6 +172,7 @@ async function speakWithServerTts(clean: string): Promise<boolean> {
       return false;
     }
     const blob = await resp.blob();
+    if (!request.current()) return true;
     console.log("[TTS] audio blob:", blob.size, "bytes, type:", blob.type);
     if (!blob.size) return false;
 
@@ -178,22 +181,25 @@ async function speakWithServerTts(clean: string): Promise<boolean> {
     activeAudioUrl = URL.createObjectURL(blob);
     activeAudio = new Audio(activeAudioUrl);
     activeAudio.onplay = () => {
+      if (!request.current()) return;
       console.log("[TTS] playing audio");
       useStore.getState().setVoiceProfile({
-        name: "Microsoft Ryan Neural",
-        lang: "en-GB",
+        name: resp.headers.get("X-JARVIS-Voice") || "Magyar beszéd",
+        lang: resp.headers.get("Content-Language") || "hu-HU",
         tier: "cinematic",
       });
       useStore.getState().setOrb("speaking");
       mic.onTtsStart();
     };
     activeAudio.onended = () => {
+      if (!request.current()) return;
       console.log("[TTS] audio ended");
       stopServerAudio();
       if (useStore.getState().orbState === "speaking") useStore.getState().setOrb("idle");
       mic.onTtsEnd();
     };
     activeAudio.onerror = (e) => {
+      if (!request.current()) return;
       console.error("[TTS] audio play error:", e);
       stopServerAudio();
       if (useStore.getState().orbState === "speaking") useStore.getState().setOrb("idle");
@@ -202,9 +208,12 @@ async function speakWithServerTts(clean: string): Promise<boolean> {
     await activeAudio.play();
     return true;
   } catch (e) {
+    if (!request.current()) return true;
     console.error("[TTS] server TTS failed:", e);
     stopServerAudio();
     return false;
+  } finally {
+    request.finish();
   }
 }
 
@@ -285,6 +294,8 @@ function maybeMarkStreamDone(): void {
 }
 
 async function fetchAndEnqueue(text: string): Promise<void> {
+  const request = speechRequests.begin();
+  const ticket = orderedSpeech.reserve();
   const gen = streamGeneration;     // snapshot — detect stale fetches
   pendingFetches++;
   console.log("[TTS:fetch] START gen=%d, pendingFetches=%d, text=\"%s\"", gen, pendingFetches, text.slice(0, 50));
@@ -293,6 +304,7 @@ async function fetchAndEnqueue(text: string): Promise<void> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      signal: request.signal,
     });
     if (gen !== streamGeneration) {
       console.log("[TTS:fetch] STALE (gen %d vs %d) — dropping", gen, streamGeneration);
@@ -303,6 +315,11 @@ async function fetchAndEnqueue(text: string): Promise<void> {
       console.warn("[TTS:fetch] server returned %d — dropping", resp.status);
       return;
     }
+    useStore.getState().setVoiceProfile({
+      name: resp.headers.get("X-JARVIS-Voice") || "Magyar beszéd",
+      lang: resp.headers.get("Content-Language") || "hu-HU",
+      tier: "fallback",
+    });
     const blob = await resp.blob();
     if (gen !== streamGeneration) {
       console.log("[TTS:fetch] STALE after blob — dropping");
@@ -310,10 +327,13 @@ async function fetchAndEnqueue(text: string): Promise<void> {
     }
     console.log("[TTS:fetch] blob size=%d", blob.size);
     if (!blob.size) return;
-    enqueueAudio(blob, gen);
+    for (const segment of orderedSpeech.complete(ticket, blob)) enqueueAudio(segment, gen);
   } catch (e) {
     console.warn("[TTS] segment fetch failed:", e);
   } finally {
+    request.finish();
+    // A failed segment must not block the following sentences forever.
+    for (const segment of orderedSpeech.complete(ticket, null)) enqueueAudio(segment, gen);
     // Only decrement if this fetch belongs to the current generation.
     // Stale fetches (from a cancelled stream) must not touch the counter.
     if (gen === streamGeneration) {
@@ -414,6 +434,8 @@ function playNext(): void {
 }
 
 export function cancelStreamingTts(): void {
+  speechRequests.cancel();
+  orderedSpeech.reset();
   // Pause the shared player FIRST — guarantees no two clips ever overlap
   // because the OS only ever plays ONE element at a time.
   if (playerAudio) {
@@ -452,9 +474,9 @@ function speakWithBrowserTts(clean: string): void {
   const u = new SpeechSynthesisUtterance(clean);
   const v = pickVoice();
   if (v) u.voice = v;
-  u.lang = v?.lang || "en-GB";
+  u.lang = v?.lang || "hu-HU";
   u.rate = 0.94;
-  u.pitch = 0.82;
+  u.pitch = 1.0;
   u.volume = 1.0;
   u.onstart = () => {
     useStore.getState().setOrb("speaking");
@@ -501,7 +523,6 @@ const BARGE_IN_MULTIPLIER = 3.2;       // voice must exceed baseline * this
 const BARGE_IN_FLOOR      = 0.12;      // and clear this absolute level
 const BARGE_IN_SUSTAIN_MS = 220;       // for this long, continuously
 // Stop words that cut TTS when heard during a cancel-probe.
-const CANCEL_RE = /\b(?:cancel|nevermind|never\s*mind|shut\s*up|stop(?:\s+(?:talking|speaking))?|be\s+quiet|quiet|enough|hush)\b/i;
 const CANCEL_PROBE_MS = 1600;          // how long to listen for the stop word
 
 // Whisper hallucinations to suppress (mirror of server filter).
@@ -516,7 +537,6 @@ const FOLLOWUP_REPLY_MS = 20_000;
 // Buffer submissions this long and join consecutive clips into ONE chat, so a
 // mid-sentence pause doesn't fire twice (the 2nd request cancelling the 1st).
 const STT_COALESCE_MS = 800;
-const SLEEP_PHRASES = /\b(?:stop listening|go to sleep|jarvis stop|sleep mode|nevermind|never mind|that's all|that is all)\b/i;
 
 export class JarvisMic {
   private analyser: AnalyserNode | null = null;
@@ -827,7 +847,7 @@ export class JarvisMic {
       // does anything here — this audio is never forwarded to the chat.
       if (isCancelProbe) {
         const probe = (result?.text || "").trim();
-        if (probe && CANCEL_RE.test(probe)) {
+        if (probe && isSpeechStop(probe)) {
           console.log("[STT] cancel word while speaking — cutting TTS:", probe);
           cancelStreamingTts();
           this._ttsActive = false;
@@ -857,7 +877,7 @@ export class JarvisMic {
         }
 
         // Sleep command always wins — drop to dormant immediately.
-        if (SLEEP_PHRASES.test(text)) {
+        if (isSleepRequest(text)) {
           this._awakeUntil = 0;
           useStore.getState().setMicMode("dormant");
           useStore.getState().setMicStatus(`dormant — say “${configuredWakeWord()}” to wake`);
