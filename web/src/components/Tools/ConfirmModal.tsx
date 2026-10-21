@@ -42,7 +42,7 @@ export default function ConfirmModal() {
             className="holo-panel max-w-xl w-full mx-4 p-5 relative"
           >
             <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-jarvis-ink text-display text-[10px] tracking-[0.4em] text-jarvis-cyan border border-jarvis-cyan/40">
-              PERMISSION REQUIRED
+              JÓVÁHAGYÁS SZÜKSÉGES
             </div>
             <div className="flex items-baseline justify-between mb-3">
               <div className="text-display text-jarvis-cyan glow-text text-lg">{top.tool}</div>
@@ -53,7 +53,7 @@ export default function ConfirmModal() {
             </div>
             {Object.keys(top.args).length > 0 && (
               <div className="text-mono text-[11px] text-jarvis-cyan/60 mb-3 max-h-32 overflow-y-auto">
-                <div className="text-jarvis-cyan/40 mb-1">args:</div>
+                <div className="text-jarvis-cyan/40 mb-1">Paraméterek:</div>
                 <pre className="whitespace-pre-wrap">{JSON.stringify(top.args, null, 2)}</pre>
               </div>
             )}
@@ -62,18 +62,18 @@ export default function ConfirmModal() {
                 onClick={() => respond(false)}
                 className="px-4 py-2 border border-jarvis-danger/60 text-jarvis-danger text-mono text-xs uppercase tracking-widest hover:bg-jarvis-danger/10 clip-trap"
               >
-                Deny <span className="opacity-60">(n)</span>
+                Elutasítás <span className="opacity-60">(n)</span>
               </button>
               <button
                 onClick={() => respond(true)}
                 className="px-4 py-2 border border-jarvis-ok/60 text-jarvis-ok text-mono text-xs uppercase tracking-widest hover:bg-jarvis-ok/10 clip-trap"
               >
-                Approve <span className="opacity-60">(y)</span>
+                Jóváhagyás <span className="opacity-60">(y)</span>
               </button>
             </div>
             {queue.length > 1 && (
               <div className="absolute -bottom-3 right-3 px-2 py-0.5 bg-jarvis-ink text-mono text-[10px] text-jarvis-cyan/60 border border-jarvis-cyan/30">
-                +{queue.length - 1} queued
+                +{queue.length - 1 } várakozik
               </div>
             )}
           </motion.div>

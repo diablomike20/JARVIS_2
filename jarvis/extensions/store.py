@@ -114,6 +114,16 @@ class WorkbenchStore:
             out['history'] = json.loads(out['history'])
             return out
 
+    def rename_session(self, sid: str, name: str) -> dict:
+        name = name.strip()
+        if not name or len(name) > 120:
+            raise ValueError('A munkamenet neve 1–120 karakter legyen.')
+        with self.connection() as c:
+            changed = c.execute('UPDATE ng_sessions SET name=? WHERE id=?', (name, sid))
+            if changed.rowcount != 1:
+                raise ValueError('Ismeretlen munkamenet.')
+        return self.session(sid)
+
     def activate(self, sid: str) -> dict:
         out = self.session(sid)
         if not Path(out['project_path']).is_dir():

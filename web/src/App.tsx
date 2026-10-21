@@ -1,3 +1,5 @@
+import Workspace from "./components/Workspace/Workspace";
+import "./styles/workspace.css";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Atmosphere from "./components/HUD/Atmosphere";
 import BootSequence from "./components/Boot/BootSequence";
@@ -105,6 +107,8 @@ function useViewport() {
 }
 
 export default function App() {
+  const [classic, setClassic] = useState(() => { try { return localStorage.getItem("jarvis.layout") === "classic"; } catch { return false; } });
+  const selectLayout = (value: boolean) => { setClassic(value); try { localStorage.setItem("jarvis.layout", value ? "classic" : "workspace"); } catch { /* storage unavailable */ } };
   const setHealth = useStore((s) => s.setHealth);
   const media = useStore((s) => s.media);
   const shellMode = useStore((s) => s.shellMode);
@@ -179,11 +183,11 @@ export default function App() {
   const booted = useStore((s) => s.booted);
   const greetedRef = useRef(false);
   useEffect(() => {
-    if (!booted || greetedRef.current) return;
+    if (!booted || greetedRef.current || !classic) return;
     greetedRef.current = true;
     const h = new Date().getHours();
-    const part = h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
-    const text = `Good ${part}, sir. All systems are online and at your service.`;
+    const part = h < 12 ? "Jó reggelt" : h < 18 ? "Jó napot" : "Jó estét";
+    const text = `${part}! Miben segíthetek?`;
     try {
       if (sessionStorage.getItem(GREETING_SESSION_KEY) === "1") return;
       sessionStorage.setItem(GREETING_SESSION_KEY, "1");
@@ -193,7 +197,7 @@ export default function App() {
       pushChat({ id: nextId(), role: "assistant", text, ts: Date.now() });
     }, 600);
     return () => clearTimeout(t);
-  }, [booted, pushChat]);
+  }, [booted, pushChat, classic]);
 
   const D = defaults();
   const swarms = useStore((s) => s.swarms);
@@ -216,6 +220,12 @@ export default function App() {
     );
   }
 
+  if (!classic) return <>
+    <Workspace onClassic={() => selectLayout(true)} />
+    <Suspense fallback={null}><Lightbox /><ArticleReader /></Suspense>
+    <ConfirmModal /><DropZone /><BootSequence />
+  </>;
+
   if (viewport.w < 900) {
     return (
       <div className="relative w-screen h-screen overflow-hidden">
@@ -223,6 +233,7 @@ export default function App() {
         <Orb />
         <CornerFrame />
         <TopBar />
+      <button onClick={() => selectLayout(false)} className="fixed bottom-2 left-3 z-50 glass-chip">Munkaterület</button>
         <StatusBar />
 
         <div className="fixed left-4 right-4 top-[76px] z-20 grid h-[136px] grid-cols-[minmax(0,1fr)_minmax(168px,190px)] gap-3 pointer-events-auto">
@@ -260,6 +271,7 @@ export default function App() {
       {/* Fixed HUD chrome — not draggable */}
       <CornerFrame />
       <TopBar />
+      <button onClick={() => selectLayout(false)} className="fixed bottom-2 left-3 z-50 glass-chip">Munkaterület</button>
       <StatusBar />
 
       {/* Reset-layout button (lower right corner near StatusBar) */}

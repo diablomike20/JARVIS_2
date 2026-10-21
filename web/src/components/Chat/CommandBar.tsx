@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore, nextId, type ChatAttachment } from "../../lib/store";
 import { wsClient } from "../../lib/ws";
-import { mic } from "../../lib/voice";
+import { mic, stopSpeaking } from "../../lib/voice";
 import { normalizeWakeWord } from "../../lib/wakeWord";
 import ImageActions from "./ImageActions";
 
@@ -21,6 +21,7 @@ export default function CommandBar() {
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useStore((s) => s.setVoiceEnabled);
   const voiceProfile = useStore((s) => s.voiceProfile);
+  const [micError, setMicError] = useState("");
   const connected = useStore((s) => s.connected);
   const pending = useStore((s) => s.pendingAttachments);
   const addAttachment = useStore((s) => s.addAttachment);
@@ -44,7 +45,7 @@ export default function CommandBar() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey && e.key === "/") || (e.key === "/" && document.activeElement?.tagName !== "TEXTAREA")) {
+      if ((e.ctrlKey && e.key === "/") || (e.key === "/" && !(["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName || "") || (document.activeElement as HTMLElement)?.isContentEditable))) {
         e.preventDefault();
         textareaRef.current?.focus();
       }
@@ -57,7 +58,14 @@ export default function CommandBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const draft = (e: Event) => { setValue(String((e as CustomEvent).detail || "")); textareaRef.current?.focus(); };
+    window.addEventListener("jarvis:draft", draft);
+    return () => window.removeEventListener("jarvis:draft", draft);
+  }, []);
+
   const submit = () => {
+    if (!connected) return;
     const v = value.trim();
     const st = useStore.getState();
     const hasAtt = st.pendingAttachments.length > 0;
@@ -66,7 +74,7 @@ export default function CommandBar() {
       pushChat({
         id: nextId(),
         role: "user",
-        text: v || (hasAtt ? "(attached)" : ""),
+        text: v || (hasAtt ? "(csatolmány)" : ""),
         ts: Date.now(),
         attachments: hasAtt ? [...st.pendingAttachments] : undefined,
       });
@@ -84,6 +92,8 @@ export default function CommandBar() {
   };
 
   const toggleMic = async () => {
+    setMicError("");
+    try {
     if (micEnabled) {
       mic.stop();
       setWakeEnabled(false);
@@ -107,6 +117,7 @@ export default function CommandBar() {
         }
       );
     }
+    } catch (e) { setMicError(e instanceof Error ? e.message : "Nem sikerült bekapcsolni a mikrofont."); }
   };
 
   const onFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,8 +152,8 @@ export default function CommandBar() {
               </span>
               <button
                 onClick={() => removeAttachment(i)}
-                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-jarvis-ink border border-jarvis-danger/50 text-jarvis-danger flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Remove"
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-jarvis-ink border border-jarvis-danger/50 text-jarvis-danger flex items-center justify-center text-[9px] opacity-70 group-hover:opacity-100 transition-opacity"
+                title="Csatolmány eltávolítása"
               >×</button>
             </div>
           ))}
@@ -165,7 +176,7 @@ export default function CommandBar() {
               onClick={() => sendSuggestion(s)}
               disabled={!connected}
               className="group flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full border border-jarvis-cyan/25 bg-jarvis-cyan/[0.06] hover:border-jarvis-cyan/60 hover:bg-jarvis-cyan/12 text-jarvis-ice/75 hover:text-jarvis-ice text-[11px] transition-all disabled:opacity-30"
-              title="Send this"
+              title="Javaslat elküldése"
             >
               <span className="text-jarvis-cyan/60 group-hover:text-jarvis-cyan text-[10px]">↳</span>
               {s}
@@ -175,11 +186,14 @@ export default function CommandBar() {
       )}
 
       {/* ── Input row ───────────────────────────────────────────────── */}
-      <div className="flex items-end gap-2 px-2.5 py-2 shrink-0 mt-auto">
+      <div className="command-input-row flex items-end gap-2 px-2.5 py-2 shrink-0 mt-auto">
         {/* Mic */}
         <button
           onClick={toggleMic}
-          title={micEnabled ? `mic ${micMode}` : "Start listening"}
+          disabled={!connected && !micEnabled}
+          aria-label={micEnabled ? "Mikrofon kikapcsolása" : "Mikrofon bekapcsolása"}
+          aria-pressed={micEnabled}
+          title={micEnabled ? "Mikrofon kikapcsolása" : "Mikrofon bekapcsolása"}
           className={`w-9 h-9 flex items-center justify-center rounded-xl border transition-all shrink-0 ${
             !micEnabled
               ? "border-jarvis-cyan/15 text-jarvis-ice/60 hover:text-jarvis-ice hover:border-jarvis-cyan/45 hover:bg-jarvis-cyan/10"
@@ -195,8 +209,10 @@ export default function CommandBar() {
 
         {/* Speaker */}
         <button
-          onClick={() => setVoiceEnabled(!voiceEnabled)}
-          title={voiceEnabled ? `Mute JARVIS (${voiceProfile?.name ?? "…"})` : `Unmute JARVIS (${voiceProfile?.name ?? "…"})`}
+          onClick={() => { if (voiceEnabled) stopSpeaking(); setVoiceEnabled(!voiceEnabled); }}
+          aria-label={voiceEnabled ? "Felolvasás kikapcsolása" : "Felolvasás bekapcsolása"}
+          aria-pressed={voiceEnabled}
+          title={voiceEnabled ? `Felolvasás kikapcsolása (${voiceProfile?.name ?? "…"})` : `Felolvasás bekapcsolása (${voiceProfile?.name ?? "…"})`}
           className={`w-9 h-9 flex items-center justify-center rounded-xl border transition-all shrink-0 ${
             voiceEnabled
               ? "border-jarvis-cyan/45 text-jarvis-cyan bg-jarvis-cyan/10"
@@ -206,10 +222,13 @@ export default function CommandBar() {
           <SpeakerIcon muted={!voiceEnabled} />
         </button>
 
+        <button onClick={stopSpeaking} aria-label="Felolvasás leállítása" title="Felolvasás leállítása" className="w-9 h-9 rounded-xl border border-jarvis-cyan/25 text-jarvis-cyan shrink-0">■</button>
+
         {/* Upload */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          title="Attach image (Ctrl+U)"
+          aria-label="Fájl csatolása"
+          title="Fájl csatolása (Ctrl+U)"
           className={`w-9 h-9 flex items-center justify-center rounded-xl border transition-all shrink-0 ${
             hasImages
               ? "border-jarvis-aqua/60 text-jarvis-aqua bg-jarvis-aqua/10"
@@ -221,20 +240,21 @@ export default function CommandBar() {
         <input ref={fileInputRef} type="file" accept="image/*,*/*" multiple className="hidden" onChange={onFileSelect} />
 
         {/* Textarea */}
-        <div className="flex-1 relative">
+        <div className="command-text flex-1 relative">
           <span className="absolute left-3 top-[9px] text-jarvis-cyan/50 text-mono select-none pointer-events-none">›</span>
           <textarea
+            aria-label="Üzenet Jarvisnak"
             ref={textareaRef}
             rows={1}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               }
             }}
-            placeholder={connected ? "Speak to JARVIS, sir." : "Reconnecting…"}
+            placeholder={connected ? "Írj Jarvisnak…" : "Kapcsolódás a motorhoz…"}
             disabled={!connected}
             className="w-full bg-jarvis-glass border border-jarvis-cyan/15 focus:border-jarvis-cyan/55 outline-none pl-8 pr-10 py-[7px] rounded-xl text-jarvis-ice text-mono text-[13px] placeholder:text-jarvis-ice/30 backdrop-blur-md transition-all resize-none overflow-hidden leading-[1.45]"
           />
@@ -249,13 +269,14 @@ export default function CommandBar() {
           disabled={(!value.trim() && pending.length === 0) || !connected}
           className="px-4 h-9 rounded-xl border border-jarvis-cyan/55 text-jarvis-ice bg-gradient-to-b from-jarvis-cyan/15 to-jarvis-cyan/5 hover:from-jarvis-cyan/25 hover:to-jarvis-cyan/10 hover:border-jarvis-cyan text-mono text-[11px] uppercase tracking-[0.25em] disabled:opacity-30 transition-all shadow-[0_0_24px_-8px_rgba(125,211,252,0.5)] shrink-0"
         >
-          send
+          Küldés
         </button>
       </div>
 
+      {micError && <p role="alert" className="px-3 pb-2 text-xs text-jarvis-danger">{micError}</p>}
       {(wakeEnabled || micStatus) && (
         <div className="px-3 pb-1.5 text-[10px] text-mono text-jarvis-cyan/50 shrink-0">
-          {micStatus ? `mic: ${micStatus}` : `listening · say “${wakeWord}” to wake`}
+          {micStatus ? `Mikrofon: ${micStatus}` : `Figyelek · ébresztőszó: „${wakeWord}”`}
         </div>
       )}
     </div>

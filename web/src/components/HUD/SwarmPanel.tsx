@@ -18,10 +18,10 @@ const STATUS_COLOR: Record<SwarmSubtask["status"], string> = {
 };
 
 const STATUS_LABEL: Record<SwarmSubtask["status"], string> = {
-  pending: "QUEUED",
-  running: "RUNNING",
-  ok:      "DONE",
-  fail:    "FAILED",
+  pending: "VÁRAKOZIK",
+  running: "DOLGOZIK",
+  ok:      "KÉSZ",
+  fail:    "HIBÁS",
 };
 
 export default function SwarmPanel() {
@@ -37,8 +37,8 @@ export default function SwarmPanel() {
     <div className="holo-panel flex flex-col h-full overflow-hidden">
       <div className="panel-header flex items-center justify-between gap-2 px-3 py-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-display text-[11px] tracking-[0.4em] text-shimmer font-medium">SWARM</span>
-          <span className="glass-chip">{swarms.filter((s) => s.active).length} active</span>
+          <span className="text-display text-[11px] tracking-[0.4em] text-shimmer font-medium">PÁRHUZAMOS MUNKÁK</span>
+          <span className="glass-chip">{swarms.filter((s) => s.active).length} aktív</span>
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-3">
@@ -80,7 +80,7 @@ export default function SwarmPanel() {
                     <button
                       onClick={() => dismiss(run.id)}
                       className="text-mono text-[10px] text-jarvis-ice/40 hover:text-jarvis-danger transition-colors"
-                      title="Dismiss"
+                      title="Bezárás"
                     >
                       ×
                     </button>
@@ -122,8 +122,8 @@ function SubtaskRow({ t }: { t: SwarmSubtask }) {
     ? ((t.endedAt - t.startedAt) / 1000).toFixed(1)
     : ((Date.now() - t.startedAt) / 1000).toFixed(1);
   return (
-    <div className="px-3 py-2 flex flex-col gap-1">
-      <div className="flex items-center gap-2 min-w-0">
+    <details className="px-3 py-2">
+      <summary className="flex items-center gap-2 min-w-0 cursor-pointer">
         <span
           className="w-1.5 h-1.5 rounded-full shrink-0"
           style={{
@@ -141,7 +141,7 @@ function SubtaskRow({ t }: { t: SwarmSubtask }) {
           {STATUS_LABEL[t.status]}
         </span>
         <span className="text-mono text-[9px] text-jarvis-ice/40 tabular-nums shrink-0">{elapsed}s</span>
-      </div>
+      </summary>
       {(t.tool || t.preview) && (
         <div className="text-mono text-[10px] text-jarvis-ice/55 pl-3.5 truncate">
           {t.tool && <span className="text-jarvis-cyan/65">{t.tool}</span>}
@@ -149,9 +149,9 @@ function SubtaskRow({ t }: { t: SwarmSubtask }) {
           {t.preview && <span>{t.preview}</span>}
         </div>
       )}
-      {t.status === "fail" && t.result && (
-        <div className="text-mono text-[10px] text-jarvis-danger pl-3.5 line-clamp-2">{t.result}</div>
+      {t.result && (
+        <div className="text-mono text-[11px] text-jarvis-ice/80 pl-3.5 whitespace-pre-wrap break-words max-h-64 overflow-auto">{t.result}</div>
       )}
-    </div>
+    </details>
   );
 }

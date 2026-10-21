@@ -25,14 +25,14 @@ export default function PlanPanel() {
       <div className="panel-header flex items-center justify-between gap-2 px-3 py-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-display text-[11px] tracking-[0.4em] text-shimmer font-medium">
-            PLAN
+            MUNKATERV
           </span>
           <span className="glass-chip tabular-nums">
             {done}/{total}
           </span>
           {!plan.complete && (
             <span className="text-mono text-[9px] tracking-[0.2em] uppercase text-jarvis-aqua animate-pulse">
-              executing
+              folyamatban
             </span>
           )}
         </div>
@@ -40,7 +40,7 @@ export default function PlanPanel() {
           <button
             onClick={clearPlan}
             className="text-mono text-[10px] text-jarvis-ice/40 hover:text-jarvis-danger transition-colors"
-            title="Dismiss"
+            title="Bezárás"
           >
             ×
           </button>

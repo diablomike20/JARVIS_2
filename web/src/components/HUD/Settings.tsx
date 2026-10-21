@@ -8,10 +8,19 @@
  */
 import { useEffect, useState } from "react";
 import { useStore } from "../../lib/store";
-import { resetAllLayouts } from "./Floating";
 import WorkbenchPanel from "./WorkbenchPanel";
+import { getHealth } from "../../lib/api";
 
 export default function Settings() {
+  const [category, setCategory] = useState("voice");
+  const [connection, setConnection] = useState("");
+  const [checking, setChecking] = useState(false);
+  const checkConnection = async () => {
+    setChecking(true); setConnection("");
+    try { const result = await getHealth(); useStore.getState().setHealth(result); setConnection("A Jarvis motor válaszol. Ez a próba a modell válaszkészségét nem ellenőrzi."); }
+    catch { setConnection("A Jarvis motor nem érhető el. Ellenőrizd, hogy fut-e a kiszolgáló."); }
+    finally { setChecking(false); }
+  };
   const health = useStore((s) => s.health);
   const voiceEnabled = useStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useStore((s) => s.setVoiceEnabled);
@@ -35,7 +44,7 @@ export default function Settings() {
   }, []);
 
   const cleanSlate = async () => {
-    if (!confirm("Wipe all chat, media, and tool history? Backend memory is preserved.")) return;
+    if (!confirm("Törlöd a beszélgetés, a média és az eszközök előzményeit, valamint az aktív szervermunkamenetet? A tartós memória megmarad.")) return;
     clearChat();
     clearMedia();
     clearTools();
@@ -46,64 +55,59 @@ export default function Settings() {
   return (
     <div className="holo-panel flex flex-col h-full overflow-hidden">
       <div className="panel-header flex items-center justify-between px-3 py-2 shrink-0">
-        <span className="text-display text-[11px] tracking-[0.4em] text-shimmer">SETTINGS</span>
+        <span className="text-display text-[11px] tracking-[0.4em] text-shimmer">BEÁLLÍTÁSOK</span>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-5 text-mono text-[12px] text-jarvis-ice/85">
-        {prevSessionAvailable && (
-          <Section title="SESSION">
+      <div className="settings-tabs" role="tablist" aria-label="Beállításcsoportok">{[["voice", "Hang"], ["memory", "Memória"], ["tasks", "Feladatok"], ["connections", "Kapcsolatok"], ["system", "Rendszer"], ["data", "Adatok"]].map(([id, label]) => <button key={id} role="tab" id={`settings-tab-${id}`} aria-selected={category === id} aria-controls="settings-panel" onClick={() => setCategory(id)}>{label}</button>)}</div>
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${category}`} className="settings-body flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-5 text-mono text-[12px] text-jarvis-ice/85">
+        {category === "data" && prevSessionAvailable && (
+          <Section title="KORÁBBI MUNKAMENET">
             <div className="text-[10px] text-jarvis-ice/45 pb-1">
-              A previous session was kept aside on launch. Memory is always preserved.
+              Az előző helyi munkamenet visszatölthető. A tartós memória ettől függetlenül megmarad.
             </div>
-            <ButtonRow label="Restore previous session" onClick={() => restoreLastSession()} />
+            <ButtonRow label="Előző munkamenet visszatöltése" onClick={() => restoreLastSession()} />
           </Section>
         )}
 
-        <Section title="VOICE">
+        {category === "voice" && <Section title="HANGVEZÉRLÉS">
           <Toggle
-            label="JARVIS speaks aloud (TTS)"
+            label="Válaszok felolvasása"
             value={voiceEnabled}
             onChange={setVoiceEnabled}
           />
           <Toggle
-            label="Listen for wake word (mic always on)"
+            label="Ébresztőszó figyelése (folyamatos mikrofonhasználat)"
             value={wakeEnabled}
             onChange={setWakeEnabled}
           />
           <Toggle
-            label="Say “cancel” to stop JARVIS speaking"
+            label="Magyar megszakítóparancsok figyelése: állj, elég, mégse"
             value={bargeIn}
             onChange={setBargeIn}
           />
-        </Section>
+        </Section>}
 
-        <WorkbenchPanel />
+        {["voice", "memory", "tasks", "connections"].includes(category) && <WorkbenchPanel key={category} section={category as "voice" | "memory" | "tasks" | "connections"} />}
 
-        <Section title="DISPLAY">
-          <ButtonRow
-            label="Reset panel layout"
-            danger={false}
-            onClick={() => { if (confirm("Reset all panel positions?")) resetAllLayouts(); }}
-          />
-        </Section>
-
-        <Section title="SYSTEM">
-          <KV k="Model"        v={`${health?.model.provider || "—"}/${health?.model.model || "—"}`} />
-          <KV k="Image model"  v={health?.image_model || "—"} />
-          <KV k="Permissions"  v={health?.permission_mode || "—"} />
-          <KV k="Tools loaded" v={String(health?.tools ?? 0)} />
-          <KV k="Plugins"      v={String(health?.plugins?.length ?? 0)} />
-          <KV k="Agents"       v={(agents.length ? agents : health?.agents || []).join(", ") || "—"} />
+        {category === "system" && <Section title="MOTOR ÉS MODELL">
+          <ButtonRow label={checking ? "Ellenőrzés…" : "Motor kapcsolatának ellenőrzése"} onClick={() => { if (!checking) void checkConnection(); }} />
+          {connection && <p role="status">{connection}</p>}
+          <KV k="Modell"        v={`${health?.model.provider || "—"}/${health?.model.model || "—"}`} />
+          <KV k="Képgeneráló modell"  v={health?.image_model || "—"} />
+          <KV k="Jogosultsági mód"  v={health?.permission_mode || "—"} />
+          <KV k="Betöltött eszközök" v={String(health?.tools ?? 0)} />
+          <KV k="Bővítmények"      v={String(health?.plugins?.length ?? 0)} />
+          <KV k="Agentszerepek"       v={(agents.length ? agents : health?.agents || []).join(", ") || "—"} />
           <div className="pt-1 text-[10px] text-jarvis-ice/40">
-            Change these in <span className="text-jarvis-aqua">config.yaml</span> — requires backend restart.
+            Ezek a beállítások a <span className="text-jarvis-aqua">config.yaml</span> fájlban módosíthatók; a motor újraindítása szükséges.
           </div>
-        </Section>
+        </Section>}
 
-        <Section title="DATA">
-          <ButtonRow label="Clear chat history" onClick={() => { if (confirm("Wipe chat?")) clearChat(); }} />
-          <ButtonRow label="Clear media bay"    onClick={() => { if (confirm("Wipe media?")) clearMedia(); }} />
-          <ButtonRow label="Clear tool history" onClick={() => { if (confirm("Wipe tool history?")) clearTools(); }} />
-          <ButtonRow label="Clean slate (chat + media + tools + backend session)" danger onClick={cleanSlate} />
-        </Section>
+        {category === "data" && <Section title="ELŐZMÉNYEK ÉS ADATOK">
+          <ButtonRow label="Helyi beszélgetésnézet ürítése" onClick={() => { if (confirm("Üríted a helyi beszélgetésnézetet?")) clearChat(); }} />
+          <ButtonRow label="Helyi eredménylista ürítése"    onClick={() => { if (confirm("Üríted a helyi eredménylistát?")) clearMedia(); }} />
+          <ButtonRow label="Helyi eszköznapló ürítése" onClick={() => { if (confirm("Üríted a helyi eszköznaplót?")) clearTools(); }} />
+          <ButtonRow label="Aktív munkamenet és helyi nézetek ürítése" danger onClick={cleanSlate} />
+        </Section>}
       </div>
     </div>
   );
@@ -113,7 +117,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <section className="space-y-2">
       <div className="text-[9px] tracking-[0.35em] text-jarvis-cyan/70 uppercase">{title}</div>
-      <div className="space-y-1.5 rounded-lg border border-jarvis-cyan/10 bg-jarvis-glass/40 p-3">
+      <div className="settings-card space-y-1.5 rounded-lg border border-jarvis-cyan/10 bg-jarvis-glass/40 p-3">
         {children}
       </div>
     </section>
@@ -128,6 +132,7 @@ function Toggle({
       <span className="text-jarvis-ice/85">{label}</span>
       <button
         type="button"
+        role="switch" aria-checked={value} aria-label={label}
         onClick={() => onChange(!value)}
         className="relative w-9 h-5 rounded-full transition-colors"
         style={{

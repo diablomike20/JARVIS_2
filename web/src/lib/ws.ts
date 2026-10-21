@@ -143,7 +143,8 @@ class JarvisWS {
         stopSpeaking();
         this.streamingId = null;
         this.taskChatId = null;
-        st.clearChat(); st.clearTools(); st.clearMedia();
+        st.clearChat(); st.clearTools(); st.clearMedia(); st.clearPlan(); st.clearSuggestions(); st.clearAttachments();
+        useStore.setState({ swarms: [] });
         for (const message of (m.messages || [])) {
           if (["user", "assistant"].includes(message.role) && typeof message.content === "string" && message.content &&
               !message.content.startsWith("<tool_result") && !message.content.startsWith("(internal protocol")) {

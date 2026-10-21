@@ -97,6 +97,21 @@ async def session(body: SessionBody, wb=Depends(service)):
     return bad_value(wb.store.create_session, body.name, body.project_id)
 
 
+class SessionRenameBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@router.patch('/sessions/{sid}')
+async def rename_session(sid: str, body: SessionRenameBody, wb=Depends(service)):
+    if wb.lock.locked():
+        raise HTTPException(409, 'Előbb állítsd le vagy várd meg a futó feladatot.')
+    async with wb.lock:
+        item = bad_value(wb.store.rename_session, sid, body.name)
+        if wb.active['id'] == sid:
+            wb.active['name'] = item['name']
+        return {'id': sid, 'name': item['name']}
+
+
 @router.post('/sessions/{sid}/activate')
 async def activate(sid: str, request: Request, wb=Depends(service)):
     if wb.lock.locked():

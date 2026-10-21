@@ -10,7 +10,7 @@ export default function ToolFeed() {
       <Header />
       <div className="space-y-1.5 overflow-y-auto max-h-[40vh] pr-1">
         {recent.length === 0 ? (
-          <div className="text-mono text-[11px] text-jarvis-cyan/40 px-1 py-2">no tool activity</div>
+          <div className="text-mono text-[11px] text-jarvis-cyan/40 px-1 py-2">Még nincs eszközművelet.</div>
         ) : (
           <AnimatePresence initial={false}>
             {recent.map((t) => <Card key={t.id} t={t} />)}
@@ -24,8 +24,8 @@ export default function ToolFeed() {
 function Header() {
   return (
     <div className="flex items-center justify-between px-1 pb-1 mb-1 border-b border-jarvis-cyan/20">
-      <div className="text-display text-[10px] tracking-[0.3em] text-jarvis-cyan/80">TOOL FEED</div>
-      <div className="text-mono text-[9px] text-jarvis-cyan/40">live</div>
+      <div className="text-display text-[10px] tracking-[0.3em] text-jarvis-cyan/80">ESZKÖZMŰVELETEK</div>
+      <div className="text-mono text-[9px] text-jarvis-cyan/40">élő</div>
     </div>
   );
 }
@@ -71,7 +71,7 @@ function Card({ t }: { t: ToolCall }) {
       )}
       {t.result && t.status !== "running" && (
         <div className="text-jarvis-cyan/50 text-[10px] mt-1 max-h-20 overflow-y-auto whitespace-pre-wrap border-l border-jarvis-cyan/20 pl-2">
-          {t.result.slice(0, 600)}{t.result.length > 600 ? "…" : ""}
+          {t.result}
         </div>
       )}
     </motion.div>
